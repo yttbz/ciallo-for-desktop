@@ -30,6 +30,7 @@ win:
       arch:
         - x64
   icon: build/icon.ico
+  artifactName: CialloForDesktop-${version}-${arch}.${ext}
 
 nsis:
   oneClick: false
@@ -43,6 +44,3 @@ nsis:
 
 portable:
   artifactName: CialloForDesktop-${version}-Portable.${ext}
-
-zip:
-  artifactName: CialloForDesktop-${version}-windows-x64.${ext}
