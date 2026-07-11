@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+  <title>CialloForDesktop 设置</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <div class="app">
+    <!-- 侧边栏 -->
+    <nav class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-title">⚙️ 设置</div>
+      </div>
+      <div class="sidebar-nav" id="sidebarNav">
+        <button class="sidebar-item active" data-tab="display">
+          <span class="sidebar-icon">🖼️</span>
+          <span class="sidebar-label">显示</span>
+        </button>
+        <button class="sidebar-item" data-tab="interaction">
+          <span class="sidebar-icon">🖱️</span>
+          <span class="sidebar-label">交互</span>
+        </button>
+        <button class="sidebar-item" data-tab="animation">
+          <span class="sidebar-icon">✨</span>
+          <span class="sidebar-label">动画</span>
+        </button>
+        <button class="sidebar-item" data-tab="about">
+          <span class="sidebar-icon">💖</span>
+          <span class="sidebar-label">关于</span>
+        </button>
+      </div>
+    </nav>
+
+    <!-- 内容区域 -->
+    <main class="content" id="content"></main>
+  </div>
+
+  <!-- 设置面板渲染脚本 -->
+  <script src="settings-renderer.js"></script>
+</body>
+</html>

@@ -11,6 +11,9 @@ files:
   - dist/**/*
   - src/index.html
   - src/style.css
+  - src/settings.html
+  - src/settings.css
+  - src/settings-renderer.js
   - assets/**/*
   - cubism-core/**/*
   - package.json

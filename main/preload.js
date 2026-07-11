@@ -23,4 +23,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // 窗口就绪通知
   ready: () => ipcRenderer.send('window-ready'),
+
+  // 打开设置窗口
+  openSettings: () => ipcRenderer.send('open-settings'),
+
+  // 设置管理 (主窗口也监听设置变更，但不想写，不主动暴露写权限)
+  onSettingsChanged: (cb) => {
+    const handler = (_event, settings) => cb(settings);
+    ipcRenderer.on('settings:changed', handler);
+    return () => ipcRenderer.removeListener('settings:changed', handler);
+  },
+
+  // 获取设置值
+  getSettings: () => ipcRenderer.invoke('settings:get'),
 });

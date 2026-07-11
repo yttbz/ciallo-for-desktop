@@ -1,7 +1,7 @@
 /**
  * CialloForDesktop - Electron 主进程
  *
- * 管理透明窗口、系统托盘、IPC 通信
+ * 管理透明窗口、系统托盘、IPC 通信、设置
  */
 
 const {
@@ -13,16 +13,21 @@ const {
   nativeImage,
   screen,
   dialog,
+  shell,
 } = require('electron');
 const path = require('path');
+const settings = require('./settings');
+const { createSettingsWindow, closeSettingsWindow } = require('./settings-window');
 
 // ======== 全局状态 ========
 let mainWindow = null;
 let tray = null;
 let isClickThrough = false;
 let isQuitting = false;
-const WINDOW_WIDTH = 540;
-const WINDOW_HEIGHT = 720;
+
+// 设置路径
+const settingsPath = path.join(app.getPath('userData'), 'ciallo-settings.json');
+let currentSettings = null;
 
 // ======== 单实例锁 ========
 const gotTheLock = app.requestSingleInstanceLock();
@@ -38,12 +43,66 @@ if (!gotTheLock) {
   });
 }
 
+// ======== 设置管理 ========
+
+function loadSettings() {
+  currentSettings = settings.load(settingsPath);
+  applySettingsToWindow(currentSettings);
+  return currentSettings;
+}
+
+function saveSettings(snapshot) {
+  const result = settings.save(settingsPath, snapshot);
+  if (result.success) {
+    currentSettings = snapshot;
+    // 广播到设置窗口
+    if (mainWindow) {
+      mainWindow.webContents.send('settings:changed', snapshot);
+    }
+  }
+  return result;
+}
+
+function applySettingsToWindow(s) {
+  if (!mainWindow) return;
+
+  // 置顶
+  if (s.alwaysOnTop !== undefined) {
+    mainWindow.setAlwaysOnTop(s.alwaysOnTop);
+  }
+
+  // 透明度
+  if (s.windowOpacity !== undefined) {
+    mainWindow.setOpacity(s.windowOpacity);
+  }
+
+  // 点击穿透
+  if (s.clickThrough !== undefined) {
+    isClickThrough = s.clickThrough;
+    if (s.clickThrough) {
+      mainWindow.setIgnoreMouseEvents(true, { forward: true });
+    } else {
+      mainWindow.setIgnoreMouseEvents(false);
+    }
+    updateTrayMenu();
+  }
+
+  // 开机自启
+  if (s.autoStart !== undefined) {
+    app.setLoginItemSettings({
+      openAtLogin: s.autoStart,
+      path: process.execPath,
+    });
+  }
+}
+
 // ======== 窗口管理 ========
 
 function createWindow() {
-  // 获取当前显示器的工作区域
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+  const WINDOW_WIDTH = 540;
+  const WINDOW_HEIGHT = 720;
 
   mainWindow = new BrowserWindow({
     width: WINDOW_WIDTH,
@@ -68,18 +127,15 @@ function createWindow() {
     },
   });
 
-  // 加载页面
   mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
 
-  // 窗口准备好后再显示（避免白屏闪烁）
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
   });
 
-  // 点击透明区域穿透
-  mainWindow.setIgnoreMouseEvents(false);
+  // 应用已加载的设置
+  loadSettings();
 
-  // 调试：开发模式下打开 DevTools
   if (process.env.NODE_ENV === 'development') {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
@@ -88,22 +144,17 @@ function createWindow() {
 // ======== 系统托盘 ========
 
 function createTray() {
-  // 使用 16x16 或 32x32 图标
   const iconPath = path.join(__dirname, '..', 'build', 'tray-icon.png');
   let trayIcon;
-
   try {
     trayIcon = nativeImage.createFromPath(iconPath);
-    // 缩放到合适大小
     trayIcon = trayIcon.resize({ width: 16, height: 16 });
   } catch (e) {
-    // 如果图标文件不存在，创建一个简单的纯色图标
     trayIcon = nativeImage.createEmpty();
   }
 
   tray = new Tray(trayIcon);
   tray.setToolTip('Ciallo～(∠?ω< )⌒★!');
-
   updateTrayMenu();
 }
 
@@ -126,11 +177,23 @@ function updateTrayMenu() {
       },
     },
     {
+      label: '打开设置',
+      click: () => {
+        createSettingsWindow(mainWindow);
+      },
+    },
+    { type: 'separator' },
+    {
       label: `点击穿透: ${isClickThrough ? '开' : '关'}`,
       type: 'checkbox',
       checked: isClickThrough,
       click: (menuItem) => {
         toggleClickThrough(menuItem.checked);
+        // 更新设置
+        if (currentSettings) {
+          currentSettings.clickThrough = menuItem.checked;
+          saveSettings(currentSettings);
+        }
       },
     },
     { type: 'separator' },
@@ -186,27 +249,24 @@ function showAboutDialog() {
 
 // ======== IPC 处理器 ========
 
-// 移动窗口（拖拽用）
+// 窗口 IPC
 ipcMain.on('window-move-by', (event, { dx, dy }) => {
   if (!mainWindow || isClickThrough) return;
   const [x, y] = mainWindow.getPosition();
   mainWindow.setPosition(x + dx, y + dy);
 });
 
-// 设置窗口位置
 ipcMain.on('window-set-position', (event, { x, y }) => {
   if (!mainWindow) return;
   mainWindow.setPosition(x, y);
 });
 
-// 获取窗口位置
 ipcMain.handle('window-get-position', () => {
   if (!mainWindow) return { x: 0, y: 0 };
   const [x, y] = mainWindow.getPosition();
   return { x, y };
 });
 
-// 设置窗口大小
 ipcMain.on('window-set-size', (event, { width, height }) => {
   if (!mainWindow) return;
   mainWindow.setSize(
@@ -215,38 +275,87 @@ ipcMain.on('window-set-size', (event, { width, height }) => {
   );
 });
 
-// 获取窗口大小
 ipcMain.handle('window-get-size', () => {
   if (!mainWindow) return { width: 0, height: 0 };
-  const [width, height] = mainWindow.getSize();
-  return { width, height };
+  const [x, y] = mainWindow.getSize();
+  return { width: x, height: y };
 });
 
-// 获取屏幕信息
 ipcMain.handle('screen-get-info', () => {
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width, height } = primaryDisplay.workAreaSize;
-  return {
-    screenWidth: width,
-    screenHeight: height,
-  };
+  return { screenWidth: width, screenHeight: height };
 });
 
-// 切换点击穿透
 ipcMain.on('toggle-click-through', () => {
   toggleClickThrough(!isClickThrough);
+  if (currentSettings) {
+    currentSettings.clickThrough = isClickThrough;
+    saveSettings(currentSettings);
+  }
 });
 
-// 检查是否点击穿透模式
 ipcMain.handle('is-click-through', () => {
   return isClickThrough;
 });
 
-// 窗口就绪通知
 ipcMain.on('window-ready', () => {
-  if (mainWindow) {
-    mainWindow.show();
+  if (mainWindow) mainWindow.show();
+});
+
+// 打开设置窗口
+ipcMain.on('open-settings', () => {
+  createSettingsWindow(mainWindow);
+});
+
+// ======== 设置 IPC ========
+
+ipcMain.handle('settings:get', () => {
+  return currentSettings || loadSettings();
+});
+
+ipcMain.handle('settings:update', (event, { key, value }) => {
+  if (!currentSettings) loadSettings();
+
+  const updated = {
+    ...currentSettings,
+    [key]: value,
+  };
+
+  const validated = settings.validate(updated);
+  const result = settings.save(settingsPath, validated);
+
+  if (result.success) {
+    currentSettings = validated;
+    applySettingsToWindow(validated);
+
+    // 通知所有窗口
+    BrowserWindow.getAllWindows().forEach((win) => {
+      if (!win.isDestroyed()) {
+        win.webContents.send('settings:changed', validated);
+      }
+    });
   }
+
+  return result;
+});
+
+ipcMain.handle('settings:reset', () => {
+  const defaults = settings.getDefaults();
+  const result = saveSettings(defaults);
+  if (result.success) {
+    applySettingsToWindow(defaults);
+    BrowserWindow.getAllWindows().forEach((win) => {
+      if (!win.isDestroyed()) {
+        win.webContents.send('settings:changed', defaults);
+      }
+    });
+  }
+  return result;
+});
+
+ipcMain.handle('settings:open-external', (event, url) => {
+  shell.openExternal(url);
 });
 
 // ======== 应用生命周期 ========
