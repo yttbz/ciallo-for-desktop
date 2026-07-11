@@ -6,7 +6,7 @@
  */
 
 import * as PIXI from 'pixi.js';
-import { Live2DModel } from 'pixi-live2d-display';
+import { Live2DModel } from 'pixi-live2d-display/cubism4';
 
 // ======== 全局状态 ========
 
@@ -71,10 +71,9 @@ function initPixi() {
   app = new PIXI.Application({
     width: window.innerWidth,
     height: window.innerHeight,
-    transparent: true,
+    backgroundAlpha: 0,
     antialias: true,
     autoStart: true,
-    backgroundColor: null,
     resolution: window.devicePixelRatio || 1,
     autoResize: true,
   });
@@ -413,7 +412,12 @@ async function main() {
       return;
     }
 
-    console.log('[Ciallo] Cubism Core version:', Live2DCubismCore.Version());
+    // 获取 Cubism Core 版本号 (csmGetVersion 返回 uint32, 格式 0xMMmmpppp)
+    const ver = Live2DCubismCore.Version.csmGetVersion();
+    const major = (ver >> 24) & 0xFF;
+    const minor = (ver >> 16) & 0xFF;
+    const patch = ver & 0xFFFF;
+    console.log(`[Ciallo] Cubism Core version: ${major}.${minor}.${patch} (${ver})`);
 
     // 初始化 PixiJS
     const canvas = initPixi();
