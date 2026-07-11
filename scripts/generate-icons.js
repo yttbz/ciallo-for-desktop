@@ -1,8 +1,8 @@
 /**
  * 生成应用图标
  *
- * 生成简单的 PNG 图标用于系统托盘和构建
- * 在 GitHub Actions 上会被替换为正式图标
+ * 生成 PNG 图标和 ICO 文件
+ * ICO 使用 256x256 PNG（electron-builder 要求至少 256x256）
  */
 
 const fs = require('fs');
@@ -11,11 +11,7 @@ const zlib = require('zlib');
 
 const BUILD_DIR = path.join(__dirname, '..', 'build');
 
-/**
- * 创建最简单的 1x1 PNG (最小有效 PNG)
- * 这里用 Node.js 原生方式生成彩色 PNG 图标
- */
-function createPNG(width, height, r, g, b, a = 255) {
+function createPNGBuffer(width, height, r, g, b, a = 255) {
   // PNG Signature
   const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
@@ -38,7 +34,7 @@ function createPNG(width, height, r, g, b, a = 255) {
       const offset = y * (width * 4 + 1) + 1 + x * 4;
 
       if (r === null && g === null && b === null) {
-        // 生成渐变彩条
+        // 生成渐变彩条 (用于大图标)
         const hue = (x / width) * 360;
         const sat = 0.8;
         const val = 1.0 - (y / height) * 0.3;
@@ -48,9 +44,11 @@ function createPNG(width, height, r, g, b, a = 255) {
         rawData[offset + 2] = cb;
         rawData[offset + 3] = a;
       } else {
-        // 边缘像素透明度渐变
+        // 纯色 + 边缘透明度渐变
         const edgeDist = Math.min(x, y, width - 1 - x, height - 1 - y);
-        const edgeAlpha = edgeDist < 2 ? Math.floor((edgeDist + 1) / 3 * a) : a;
+        const edgeAlpha = edgeDist < Math.max(2, Math.floor(width * 0.02))
+          ? Math.floor((edgeDist + 1) / Math.max(2, Math.floor(width * 0.02)) * a)
+          : a;
 
         rawData[offset] = r;
         rawData[offset + 1] = g;
@@ -113,71 +111,89 @@ function hsvToRgb(h, s, v) {
   ];
 }
 
+/**
+ * 创建 ICO 文件
+ * ICO = header + directory entries + image data (PNG)
+ * 包含 32x32 和 256x256 两个尺寸
+ */
+function createICO(images) {
+  const count = images.length;
+  const headerSize = 6;
+  const entrySize = 16;
+  const header = Buffer.alloc(headerSize);
+  header.writeUInt16LE(0, 0);     // Reserved
+  header.writeUInt16LE(1, 2);     // Type: ICO
+  header.writeUInt16LE(count, 4); // Count
+
+  // Calculate offsets
+  let dataOffset = headerSize + count * entrySize;
+  const buffers = [];
+
+  for (const img of images) {
+    const entry = Buffer.alloc(entrySize);
+    const w = img.width >= 256 ? 0 : img.width;
+    const h = img.height >= 256 ? 0 : img.height;
+    entry.writeUInt8(w, 0);    // Width
+    entry.writeUInt8(h, 1);    // Height
+    entry.writeUInt8(0, 2);    // Colors
+    entry.writeUInt8(0, 3);    // Reserved
+    entry.writeUInt16LE(1, 4); // Color planes
+    entry.writeUInt16LE(32, 6); // Bits per pixel
+    entry.writeUInt32LE(img.data.length, 8);  // Image size
+    entry.writeUInt32LE(dataOffset, 12);       // Offset
+
+    buffers.push(entry);
+    dataOffset += img.data.length;
+  }
+
+  return Buffer.concat([header, ...buffers, ...images.map(i => i.data)]);
+}
+
 function generateIcons() {
   if (!fs.existsSync(BUILD_DIR)) {
     fs.mkdirSync(BUILD_DIR, { recursive: true });
   }
 
-  // 生成粉色系图标 (Ciallo 主题色: #FF6699)
-  const pinkR = 0xFF, pinkG = 0x66, pinkB = 0x99;
+  const pinkR = 0xFF, pinkG = 0x66, pinkB = 0x99; // Ciallo 粉色
 
-  // 各尺寸图标
-  const sizes = {
+  // 小图标: 纯色
+  const smallSizes = {
     'tray-icon.png': 32,
     'icon-16.png': 16,
     'icon-32.png': 32,
     'icon-64.png': 64,
     'icon-128.png': 128,
-    'icon-256.png': 256,
   };
 
-  for (const [name, size] of Object.entries(sizes)) {
-    // 小图标用纯色，大图标用渐变
-    const isSmall = size <= 32;
-    const png = createPNG(size, size,
-      isSmall ? pinkR : null,
-      isSmall ? pinkG : null,
-      isSmall ? pinkB : null
-    );
+  for (const [name, size] of Object.entries(smallSizes)) {
+    const png = createPNGBuffer(size, size, pinkR, pinkG, pinkB);
     fs.writeFileSync(path.join(BUILD_DIR, name), png);
     console.log(`✓ Created ${name} (${size}x${size})`);
   }
 
-  // 创建 icon.png (256x256, 作为 app 图标)
-  const icon256 = createPNG(256, 256, null, null, null);
-  fs.writeFileSync(path.join(BUILD_DIR, 'icon.png'), icon256);
-  console.log('✓ Created icon.png (256x256)');
+  // 大图标: 渐变
+  const largeSizes = {
+    'icon-256.png': 256,
+    'icon.png': 256,
+  };
 
-  // 创建 .ico (Windows 图标) - 使用最简单的格式
-  // 把 32x32 PNG 包裹在 ICO 格式中
-  createICO(path.join(BUILD_DIR, 'icon.ico'), 32, pinkR, pinkG, pinkB);
+  for (const [name, size] of Object.entries(largeSizes)) {
+    const png = createPNGBuffer(size, size, null, null, null);
+    fs.writeFileSync(path.join(BUILD_DIR, name), png);
+    console.log(`✓ Created ${name} (${size}x${size})`);
+  }
+
+  // ICO 文件: 包含 32x32 + 256x256
+  const ico32 = createPNGBuffer(32, 32, pinkR, pinkG, pinkB);
+  const ico256 = createPNGBuffer(256, 256, null, null, null);
+  const icoData = createICO([
+    { width: 32, height: 32, data: ico32 },
+    { width: 256, height: 256, data: ico256 },
+  ]);
+  fs.writeFileSync(path.join(BUILD_DIR, 'icon.ico'), icoData);
+  console.log(`✓ Created icon.ico (32x32 + 256x256)`);
 
   console.log('\n✓ All icons generated!');
-}
-
-function createICO(filePath, size, r, g, b) {
-  const pngData = createPNG(size, size, r, g, b);
-  const pngSize = pngData.length;
-
-  // ICO header
-  const header = Buffer.alloc(6);
-  header.writeUInt16LE(0, 0);     // Reserved (0)
-  header.writeUInt16LE(1, 2);     // Type: ICO
-  header.writeUInt16LE(1, 4);     // Count: 1 image
-
-  // ICO directory entry
-  const entry = Buffer.alloc(16);
-  entry.writeUInt8(size >= 256 ? 0 : size, 0);  // Width
-  entry.writeUInt8(size >= 256 ? 0 : size, 1);  // Height
-  entry.writeUInt8(0, 2);  // Colors
-  entry.writeUInt8(0, 3);  // Reserved
-  entry.writeUInt16LE(1, 4);  // Color planes
-  entry.writeUInt16LE(32, 6); // Bits per pixel
-  entry.writeUInt32LE(pngSize, 8);  // Image size
-  entry.writeUInt32LE(22, 12); // Image offset (header + entry size)
-
-  fs.writeFileSync(filePath, Buffer.concat([header, entry, pngData]));
-  console.log(`✓ Created icon.ico (${size}x${size})`);
 }
 
 generateIcons();
