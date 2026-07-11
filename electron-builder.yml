@@ -1,0 +1,35 @@
+appId: com.yttbz.ciallo-for-desktop
+productName: "Ciallo～(∠?ω< )⌒★!"
+copyright: "Copyright © 2024 yttbz"
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - main/**/*
+  - dist/**/*
+  - src/index.html
+  - src/style.css
+  - assets/**/*
+  - cubism-core/**/*
+  - package.json
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icon.ico
+  publisherName: yttbz
+  verifyUpdateCodeSignature: false
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  artifactName: CialloForDesktop-${version}-Setup.${ext}
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: "Ciallo～(∠?ω< )⌒★!"

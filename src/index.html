@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' 'unsafe-inline' 'unsafe-eval'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' file: data:; media-src 'self' file:; connect-src 'self' file:;">
+  <title>CialloForDesktop</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 加载提示 -->
+  <div id="loading" class="loading">
+    <div class="loading-text">Ciallo～(∠?ω< )⌒★!</div>
+    <div class="loading-text">加载中...</div>
+  </div>
+
+  <!-- 错误提示 -->
+  <div id="error" class="error" style="display: none;">
+    <div class="error-text">模型加载失败</div>
+    <div class="error-detail" id="errorDetail"></div>
+  </div>
+
+  <!-- Canvas 容器 -->
+  <div id="canvas-container"></div>
+
+  <!-- Cubism Web Core -->
+  <script src="../cubism-core/live2dcubismcore.min.js"></script>
+
+  <!-- 打包后的 Renderer -->
+  <script src="../dist/renderer.js"></script>
+</body>
+</html>

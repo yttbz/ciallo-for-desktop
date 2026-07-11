@@ -1,0 +1,66 @@
+name: Build Windows Desktop Pet
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Cubism Web Core
+        run: node scripts/download-cubism-core.js
+        shell: bash
+
+      - name: Verify Cubism Core files
+        run: |
+          if (!(Test-Path "cubism-core/live2dcubismcore.min.js")) {
+            Write-Error "Cubism Core JS not found"
+            exit 1
+          }
+
+      - name: Build renderer bundle
+        run: npx esbuild src/renderer.js --bundle --outfile=dist/renderer.js --platform=browser
+
+      - name: Build Windows installer
+        run: npx electron-builder --win --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CialloForDesktop-Setup
+          path: dist/*.exe
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: CialloForDesktop-Setup
+          path: release
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.exe
+          generate_release_notes: true
+          draft: true

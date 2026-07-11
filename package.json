@@ -1,0 +1,23 @@
+{
+  "name": "ciallo-for-desktop",
+  "version": "1.0.0",
+  "description": "Ciallo～(∠?ω< )⌒★! Live2D Desktop Pet",
+  "main": "main/main.js",
+  "scripts": {
+    "build:renderer": "esbuild src/renderer.js --bundle --outfile=dist/renderer.js --platform=browser --external:./cubism-core/*",
+    "start": "node scripts/download-cubism-core.js && npm run build:renderer && electron .",
+    "build": "node scripts/download-cubism-core.js && npm run build:renderer && npx electron-builder --win --x64",
+    "download:core": "node scripts/download-cubism-core.js"
+  },
+  "dependencies": {
+    "pixi.js": "^6.5.10",
+    "pixi-live2d-display": "^0.4.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^26.0.0",
+    "esbuild": "^0.25.0"
+  },
+  "author": "yttbz",
+  "license": "MIT"
+}
