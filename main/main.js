@@ -147,20 +147,24 @@ function createWindow() {
 // ======== 系统托盘 ========
 
 function createTray() {
-  // 优先使用 assets/app-icon.png（打包时会被包含），回退到 build/tray-icon.png
-  let iconPath = path.join(__dirname, '..', 'assets', 'app-icon.png');
-  if (!require('fs').existsSync(iconPath)) {
-    iconPath = path.join(__dirname, '..', 'build', 'tray-icon.png');
-  }
+  // assets/app-icon.png 会被打包包含，作为托盘图标
+  const iconPath = path.join(__dirname, '..', 'assets', 'app-icon.png');
   let trayIcon;
+
   try {
-    trayIcon = nativeImage.createFromPath(iconPath);
-    trayIcon = trayIcon.resize({ width: 32, height: 32 });
+    if (require('fs').existsSync(iconPath)) {
+      trayIcon = nativeImage.createFromPath(iconPath);
+    } else {
+      // 回退：用代码生成一个简单图标
+      trayIcon = nativeImage.createEmpty();
+    }
   } catch (e) {
-    // 如果图标文件不存在，创建一个简单的纯色图标
-    trayIcon = nativeImage.createFromDataURL(
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAPhJREFUWEft1rENwjAQBdD/FYyAWIAJ2IAOKpZgBEZgBDoWYARGYAMK4kiWLNnxnU8UKZLr/Pd9thME/uNA4A+BfwII/HMHZi3Qe380TdO2bXs3xnwBzjnbdd2hlHIBYIx5G2MfY8wN4F4BpZQ7IiIiIoqiB4D4GXDO78aYOwD33gMA3ntrrX0CKKWciMAYs2mtLwBKKScAOI7jBCCiN4AIgO/7XwARWQFEZHQDY0x618BPD8TvAZQSERGp67oGSCIiUtX1JyAiImVZfgRE5GOMaZqmOQJExBizbdt9XdcjIjLG7JxzB4CPMeY4jvs4jhcAOI7jH+dMv4U/gD9f8y886Xy9xQAAAABJRU5ErkJggg=='
-    );
+    trayIcon = nativeImage.createEmpty();
+  }
+
+  // 缩放到合适的托盘尺寸 (Windows 推荐 16x16 ~ 32x32)
+  if (!trayIcon.isEmpty()) {
+    trayIcon = trayIcon.resize({ width: 32, height: 32 });
   }
 
   tray = new Tray(trayIcon);
@@ -245,14 +249,15 @@ function showAboutDialog() {
     title: '关于 CialloForDesktop',
     message: 'Ciallo～(∠?ω< )⌒★!',
     detail: [
-      'CialloForDesktop v1.0.0',
+      'CialloForDesktop v1.0.1',
       '',
-      '一款基于 Live2D 的桌面宠物',
+      '一款基于 Live2D 的 Windows 桌面宠物',
       '模型: 浴衣丛雨 (Murasame Yukata)',
-      '版权: © ゆずソフト (Yuzu-Soft)',
-      '仅供个人使用',
+      '版权: © ゆずソフト (Yuzu-Soft) — 仅供个人使用',
       '',
       'Built with Electron + PixiJS + Live2D Cubism',
+      '',
+      '项目地址: https://github.com/yttbz/ciallo-for-desktop',
     ].join('\n'),
   });
 }
