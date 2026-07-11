@@ -5,3 +5,6 @@ cubism-core/
 .DS_Store
 Thumbs.db
 *.7z
+.env
+.env.*
+!.env.example
