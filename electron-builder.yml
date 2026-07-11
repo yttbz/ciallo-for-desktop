@@ -21,8 +21,6 @@ win:
       arch:
         - x64
   icon: build/icon.ico
-  publisherName: yttbz
-  verifyUpdateCodeSignature: false
 
 nsis:
   oneClick: false
