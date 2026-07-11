@@ -1,5 +1,5 @@
 {
-  "name": "ciallo-for-desktop",
+  "name": "@yttbz/ciallo-for-desktop",
   "version": "1.0.1",
   "description": "Ciallo~(∠?ω< ) - Live2D Desktop Pet",
   "main": "main/main.js",
@@ -12,7 +12,7 @@
   },
   "homepage": "https://github.com/yttbz/ciallo-for-desktop#readme",
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com/@yttbz"
+    "registry": "https://npm.pkg.github.com/"
   },
   "scripts": {
     "build:renderer": "esbuild src/renderer.js --bundle --outfile=dist/renderer.js --platform=browser --external:./cubism-core/*",
