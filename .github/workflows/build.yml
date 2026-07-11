@@ -38,14 +38,16 @@ jobs:
       - name: Build renderer bundle
         run: npx esbuild src/renderer.js --bundle --outfile=dist/renderer.js --platform=browser
 
-      - name: Build Windows installer
+      - name: Build Windows packages (installer + portable)
         run: npx electron-builder --win --x64 --publish=never
 
-      - name: Upload installer artifact
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: CialloForDesktop-Setup
-          path: dist/*.exe
+          name: CialloForDesktop-Build
+          path: |
+            dist/*.exe
+            dist/*.zip
           if-no-files-found: error
 
   release:
@@ -57,11 +59,36 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: CialloForDesktop-Setup
+          name: CialloForDesktop-Build
           path: release
+
+      - name: List release files
+        run: ls -lh release/
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: release/*.exe
+          files: |
+            release/*.exe
+            release/*.zip
           generate_release_notes: true
           draft: true
+
+  publish-package:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://npm.pkg.github.com'
+      - run: npm ci
+      - run: |
+          echo "Publishing @yttbz/ciallo-for-desktop to GitHub Packages..."
+          npm publish --access=public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

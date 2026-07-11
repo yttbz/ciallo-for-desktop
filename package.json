@@ -1,12 +1,24 @@
 {
   "name": "ciallo-for-desktop",
-  "version": "1.0.0",
-  "description": "Ciallo～(∠?ω< )⌒★! Live2D Desktop Pet",
+  "version": "1.0.1",
+  "description": "Ciallo~(∠?ω< ) - Live2D Desktop Pet",
   "main": "main/main.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yttbz/ciallo-for-desktop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yttbz/ciallo-for-desktop/issues"
+  },
+  "homepage": "https://github.com/yttbz/ciallo-for-desktop#readme",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com/@yttbz"
+  },
   "scripts": {
     "build:renderer": "esbuild src/renderer.js --bundle --outfile=dist/renderer.js --platform=browser --external:./cubism-core/*",
     "start": "node scripts/download-cubism-core.js && npm run build:renderer && electron .",
     "build": "node scripts/download-cubism-core.js && npm run build:renderer && npx electron-builder --win --x64",
+    "build:all": "node scripts/download-cubism-core.js && npm run build:renderer && npx electron-builder --win --x64 --config.portable",
     "download:core": "node scripts/download-cubism-core.js"
   },
   "dependencies": {
@@ -19,5 +31,21 @@
     "esbuild": "^0.25.0"
   },
   "author": "yttbz",
-  "license": "MIT"
+  "contributors": [
+    {
+      "name": "Claude AI",
+      "url": "https://anthropic.com/claude"
+    }
+  ],
+  "license": "MIT",
+  "keywords": [
+    "live2d",
+    "desktop-pet",
+    "electron",
+    "pixijs",
+    "yuzu-soft",
+    "murasame",
+    "windows",
+    "waifu"
+  ]
 }
