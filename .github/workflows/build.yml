@@ -45,9 +45,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: CialloForDesktop-Build
-          path: |
-            dist/*.exe
-            dist/*.zip
+          path: dist/*.exe
           if-no-files-found: error
 
   release:
@@ -67,9 +65,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: |
-            release/*.exe
-            release/*.zip
+          files: release/*.exe
           generate_release_notes: true
           draft: true
 
