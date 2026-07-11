@@ -1,6 +1,6 @@
 appId: com.yttbz.ciallo-for-desktop
-productName: "Ciallo～(∠?ω< )⌒★!"
-copyright: "Copyright © 2024 yttbz"
+productName: "Ciallo~(∠?w< )"
+copyright: "Copyright (c) 2024 yttbz"
 
 directories:
   output: dist
@@ -26,6 +26,9 @@ win:
     - target: portable
       arch:
         - x64
+    - target: zip
+      arch:
+        - x64
   icon: build/icon.ico
 
 nsis:
@@ -36,7 +39,10 @@ nsis:
   artifactName: CialloForDesktop-${version}-Setup.${ext}
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: "Ciallo～(∠?ω< )⌒★!"
+  shortcutName: "Ciallo~(∠?w< )"
 
 portable:
   artifactName: CialloForDesktop-${version}-Portable.${ext}
+
+zip:
+  artifactName: CialloForDesktop-${version}-windows-x64.${ext}
