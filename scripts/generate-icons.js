@@ -22,6 +22,14 @@ function generateIcons() {
     process.exit(1);
   }
 
+  // 复制到 assets 目录（应用打包时会包含）
+  const assetsDir = path.join(__dirname, '..', 'assets');
+  if (!fs.existsSync(assetsDir)) {
+    fs.mkdirSync(assetsDir, { recursive: true });
+  }
+  fs.copyFileSync(sourceIcon, path.join(assetsDir, 'app-icon.png'));
+  console.log('✓ Created assets/app-icon.png');
+
   // 复制为各种尺寸的图标
   const iconNames = [
     'icon-16.png',

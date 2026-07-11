@@ -147,11 +147,14 @@ function createWindow() {
 // ======== 系统托盘 ========
 
 function createTray() {
-  const iconPath = path.join(__dirname, '..', 'build', 'tray-icon.png');
+  // 优先使用 assets/app-icon.png（打包时会被包含），回退到 build/tray-icon.png
+  let iconPath = path.join(__dirname, '..', 'assets', 'app-icon.png');
+  if (!require('fs').existsSync(iconPath)) {
+    iconPath = path.join(__dirname, '..', 'build', 'tray-icon.png');
+  }
   let trayIcon;
   try {
     trayIcon = nativeImage.createFromPath(iconPath);
-    // 缩放到托盘合适大小 (32x32 在 Windows 上更清晰)
     trayIcon = trayIcon.resize({ width: 32, height: 32 });
   } catch (e) {
     // 如果图标文件不存在，创建一个简单的纯色图标
