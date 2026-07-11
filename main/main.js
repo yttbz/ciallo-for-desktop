@@ -104,11 +104,14 @@ function createWindow() {
   const WINDOW_WIDTH = 540;
   const WINDOW_HEIGHT = 720;
 
+  // 先创建一个小窗口，加载模型后会自动调整大小
+  const initW = 300;
+  const initH = 400;
   mainWindow = new BrowserWindow({
-    width: WINDOW_WIDTH,
-    height: WINDOW_HEIGHT,
-    x: Math.round((screenWidth - WINDOW_WIDTH) / 2),
-    y: Math.round((screenHeight - WINDOW_HEIGHT) / 2),
+    width: initW,
+    height: initH,
+    x: Math.round((screenWidth - initW) / 2),
+    y: Math.round((screenHeight - initH) / 2),
     transparent: true,
     frame: false,
     alwaysOnTop: true,
@@ -148,9 +151,13 @@ function createTray() {
   let trayIcon;
   try {
     trayIcon = nativeImage.createFromPath(iconPath);
-    trayIcon = trayIcon.resize({ width: 16, height: 16 });
+    // 缩放到托盘合适大小 (32x32 在 Windows 上更清晰)
+    trayIcon = trayIcon.resize({ width: 32, height: 32 });
   } catch (e) {
-    trayIcon = nativeImage.createEmpty();
+    // 如果图标文件不存在，创建一个简单的纯色图标
+    trayIcon = nativeImage.createFromDataURL(
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAPhJREFUWEft1rENwjAQBdD/FYyAWIAJ2IAOKpZgBEZgBDoWYARGYAMK4kiWLNnxnU8UKZLr/Pd9thME/uNA4A+BfwII/HMHZi3Qe380TdO2bXs3xnwBzjnbdd2hlHIBYIx5G2MfY8wN4F4BpZQ7IiIiIoqiB4D4GXDO78aYOwD33gMA3ntrrX0CKKWciMAYs2mtLwBKKScAOI7jBCCiN4AIgO/7XwARWQFEZHQDY0x618BPD8TvAZQSERGp67oGSCIiUtX1JyAiImVZfgRE5GOMaZqmOQJExBizbdt9XdcjIjLG7JxzB4CPMeY4jvs4jhcAOI7jH+dMv4U/gD9f8y886Xy9xQAAAABJRU5ErkJggg=='
+    );
   }
 
   tray = new Tray(trayIcon);

@@ -141,10 +141,10 @@ function applyModelScale(scaleRatio) {
 
   model.scale.set(finalScale);
 
-  // 重新定位
+  // 居中放置 (让模型在窗口正中间)
   model.position.set(
     window.innerWidth / 2,
-    window.innerHeight - modelHeight * finalScale * 0.45
+    window.innerHeight / 2
   );
 
   adjustWindowSize();
@@ -158,11 +158,12 @@ function adjustWindowSize() {
 
   const bounds = model.getLocalBounds();
   const scale = model.scale.x;
-  const canvasWidth = Math.ceil(bounds.width * scale + 60);
-  const canvasHeight = Math.ceil(bounds.height * scale + 80);
+  // 只留 20px 边缘，让窗口紧贴模型
+  const canvasWidth = Math.ceil(bounds.width * scale + 20);
+  const canvasHeight = Math.ceil(bounds.height * scale + 20);
 
-  const width = Math.max(200, Math.min(canvasWidth, 800));
-  const height = Math.max(300, Math.min(canvasHeight, 1000));
+  const width = Math.max(150, Math.min(canvasWidth, 800));
+  const height = Math.max(200, Math.min(canvasHeight, 1000));
 
   app.renderer.resize(width, height);
 
@@ -406,11 +407,10 @@ function initResizeHandler() {
       app.renderer.resize(window.innerWidth, window.innerHeight);
     }
     if (model) {
-      const bounds = model.getLocalBounds();
-      const scale = model.scale.x;
+      // 居中放置
       model.position.set(
         window.innerWidth / 2,
-        window.innerHeight - bounds.height * scale * 0.45
+        window.innerHeight / 2
       );
     }
   });
