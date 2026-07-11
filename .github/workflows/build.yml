@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: read
+      actions: write
 
     steps:
       - uses: actions/checkout@v4
@@ -36,9 +39,7 @@ jobs:
         run: npx esbuild src/renderer.js --bundle --outfile=dist/renderer.js --platform=browser
 
       - name: Build Windows installer
-        run: npx electron-builder --win --x64
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --x64 --publish=never
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
