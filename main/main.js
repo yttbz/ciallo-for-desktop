@@ -22,6 +22,7 @@ const { createSettingsWindow, closeSettingsWindow, getSettingsWindow } = require
 // ======== 全局状态 ========
 let mainWindow = null;
 let tray = null;
+let trayContextMenu = null; // 保存菜单引用，供右键弹出
 let isClickThrough = false;
 let isQuitting = false;
 
@@ -172,25 +173,43 @@ function createWindow() {
 
 // ======== 系统托盘 ========
 
+/**
+ * 生成备用托盘图标（粉色圆形 + C 字母）
+ * 在 app-icon.png 读取失败时使用
+ */
+function generateFallbackIcon() {
+  // 内嵌的 base64 PNG: 64x64 粉色圆形 + 白色 C
+  const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAACC0lEQVR4nO2bu43DMAyGs0VWSJs2pdvMkRvBZdq0aW+FlJ7Bc6T1Cu54FEQDhp+Srdf5F4G/SZCA/CzREkWdTtmyBTP6+b2w7qwHq2Q9RaV8pr67xPbTmXEwBevFqlktiwzVym/Ub4vYcVgZO3xlvVnNZHBrNg2kkf+8xo5v1uRpV6tPdxuAvqqkRoXM64/x8N4PoNMner6Q5GXjtEsAncoYgZ+NhnsYAN20OIcK/sb6bnTUFwASn26+g1fvaZvXWUgAJL7dfQa/10HfADq5hSDDft+TDwugdTYdSCe87XM+DgASn/cnRtqa7eMDUKr2Bm//nk8LgNK2dQLpFZ57h8IDULJfMZLN8jZ9AB/b4AtPjsQCoGS+gSLXiS8NAGYJkfR+3p8j8QAordcTSBcejgrgbQJgupJzDADNWvD+kl8aAJTmkyHpIuTRAbyWANQAAOolAG52fGkDaOeC97P0TQ+A0nhpTHMFD9cWJsA1jQsmpI+mUAA8pgBMb32PCWC8RSZ9SIkC4JkB5CmQk2B+DQ4BYC+EBALuUlgAwG+G4LfD2AURgYBbEhMA8EVR7LK4QMA9GBEA2EdjAgH3cFQAYB+PCwTcBokeBNwWGQGA3SQlEHDb5HoQcBslBxAwW2V7EHCbpXsQcNvlByAwL0wMIOBemekboV6aGhqhXpubMkK8OLlkhHZ1Nts/sD9C+sY7GiXvKwAAAABJRU5ErkJggg==';
+  try {
+    return nativeImage.createFromDataURL('data:image/png;base64,' + b64);
+  } catch (e) {
+    return nativeImage.createEmpty();
+  }
+}
+
 function createTray() {
   // assets/app-icon.png 会被打包包含，作为托盘图标
-  const iconPath = path.join(__dirname, '..', 'assets', 'app-icon.png');
   let trayIcon;
 
   try {
+    const iconPath = path.join(__dirname, '..', 'assets', 'app-icon.png');
     if (require('fs').existsSync(iconPath)) {
       trayIcon = nativeImage.createFromPath(iconPath);
     } else {
-      // 回退：用代码生成一个简单图标
-      trayIcon = nativeImage.createEmpty();
+      // 文件不存在时使用备用图标
+      trayIcon = generateFallbackIcon();
     }
   } catch (e) {
-    trayIcon = nativeImage.createEmpty();
+    console.warn('[Main] Failed to load tray icon, using fallback:', e.message);
+    trayIcon = generateFallbackIcon();
   }
 
   // 缩放到合适的托盘尺寸 (Windows 推荐 16x16 ~ 32x32)
   if (!trayIcon.isEmpty()) {
     trayIcon = trayIcon.resize({ width: 32, height: 32 });
+  } else {
+    // 仍然为空时再尝试一次备用
+    trayIcon = generateFallbackIcon().resize({ width: 32, height: 32 });
   }
 
   try {
@@ -206,6 +225,7 @@ function createTray() {
 }
 
 function updateTrayMenu() {
+  if (!tray) return;
   const scale = currentSettings ? currentSettings.modelScale : 0.85;
 
   const sizeSubmenu = [
@@ -277,7 +297,82 @@ function updateTrayMenu() {
     },
   ]);
 
+  trayContextMenu = contextMenu;  // 保存供右键弹出
   tray.setContextMenu(contextMenu);
+}
+
+/**
+ * 构建并弹出右键上下文菜单（独立于托盘图标是否可见）
+ */
+function buildAndPopupContextMenu() {
+  const scale = currentSettings ? currentSettings.modelScale : 0.85;
+
+  const sizeSubmenu = [
+    { label: 'S',  type: 'radio', checked: Math.abs(scale - 0.50) < 0.05, click: () => setModelScale(0.50) },
+    { label: 'M',  type: 'radio', checked: Math.abs(scale - 0.75) < 0.05, click: () => setModelScale(0.75) },
+    { label: 'L',  type: 'radio', checked: Math.abs(scale - 0.85) < 0.05, click: () => setModelScale(0.85) },
+    { label: 'XL', type: 'radio', checked: Math.abs(scale - 1.15) < 0.05, click: () => setModelScale(1.15) },
+    { label: 'XXL',type: 'radio', checked: Math.abs(scale - 1.50) < 0.05, click: () => setModelScale(1.50) },
+  ];
+
+  const menu = Menu.buildFromTemplate([
+    { label: '⚙️ 打开设置',
+      click: () => { createSettingsWindow(mainWindow, currentSettings || {}); },
+    },
+    { type: 'separator' },
+    { label: '显示/隐藏',
+      click: () => {
+        if (!mainWindow) return;
+        if (mainWindow.isVisible()) { mainWindow.hide(); }
+        else { mainWindow.show(); mainWindow.focus(); }
+      },
+    },
+    { type: 'separator' },
+    {
+      label: '置顶',
+      type: 'checkbox',
+      checked: currentSettings ? currentSettings.alwaysOnTop : true,
+      click: (menuItem) => {
+        if (!currentSettings) return;
+        currentSettings.alwaysOnTop = menuItem.checked;
+        saveSettings(currentSettings);
+      },
+    },
+    {
+      label: 'HUD',
+      type: 'checkbox',
+      checked: currentSettings ? currentSettings.enableHUD : false,
+      click: (menuItem) => {
+        if (!currentSettings) return;
+        currentSettings.enableHUD = menuItem.checked;
+        saveSettings(currentSettings);
+      },
+    },
+    {
+      label: '点击穿透',
+      type: 'checkbox',
+      checked: isClickThrough,
+      click: (menuItem) => {
+        toggleClickThrough(menuItem.checked);
+        if (currentSettings) {
+          currentSettings.clickThrough = menuItem.checked;
+          saveSettings(currentSettings);
+        }
+      },
+    },
+    { type: 'separator' },
+    {
+      label: '大小',
+      submenu: sizeSubmenu,
+    },
+    { type: 'separator' },
+    { label: '关于', click: showAboutDialog },
+    { label: '退出',
+      click: () => { isQuitting = true; app.quit(); },
+    },
+  ]);
+
+  menu.popup({ window: mainWindow });
 }
 
 // ======== 点击穿透切换 ========
@@ -385,6 +480,13 @@ ipcMain.on('open-settings', () => {
   createSettingsWindow(mainWindow, currentSettings || {});
 });
 
+// 右键上下文菜单：在鼠标位置弹出托盘菜单
+ipcMain.on('show-context-menu', () => {
+  if (!mainWindow) return;
+  // 构建菜单（独立于托盘存在与否）
+  buildAndPopupContextMenu();
+});
+
 // ======== 设置 IPC ========
 
 ipcMain.handle('settings:get', () => {
@@ -444,7 +546,10 @@ ipcMain.handle('app:get-version', () => {
 
 app.whenReady().then(() => {
   createWindow();
-  createTray();
+  // 如果 applySettingsToWindow 已经创建了托盘，就不要重复创建
+  if (!tray) {
+    createTray();
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

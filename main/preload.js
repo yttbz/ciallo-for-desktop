@@ -27,6 +27,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 打开设置窗口
   openSettings: () => ipcRenderer.send('open-settings'),
 
+  // 显示右键上下文菜单
+  showContextMenu: () => ipcRenderer.send('show-context-menu'),
+
   // 设置管理 (主窗口也监听设置变更，但不想写，不主动暴露写权限)
   onSettingsChanged: (cb) => {
     const handler = (_event, settings) => cb(settings);

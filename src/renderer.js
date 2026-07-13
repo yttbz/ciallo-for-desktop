@@ -217,7 +217,8 @@ function adjustWindowSize() {
 
 function initDrag(canvas) {
   canvas.addEventListener('mousedown', (e) => {
-    if (!isLoaded || !dragEnabled) return;
+    // 仅左键 (button === 0) 触发拖拽，右键留给 contextmenu
+    if (e.button !== 0 || !isLoaded || !dragEnabled) return;
 
     isDragging = true;
     dragMoved = false;
@@ -736,6 +737,18 @@ function applyHudSettings(settings) {
   }
 }
 
+// ======== 右键上下文菜单 ========
+
+function initContextMenu(canvas) {
+  // 右键 → 弹出系统托盘菜单
+  canvas.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (window.electronAPI && window.electronAPI.showContextMenu) {
+      window.electronAPI.showContextMenu();
+    }
+  });
+}
+
 // ======== 键盘快捷键 ========
 
 function initKeyboardShortcuts() {
@@ -801,6 +814,7 @@ async function main() {
 
     // 初始化交互
     initDrag(canvas);
+    initContextMenu(canvas);
     initMouseTracking(canvas);
     initKeyboardShortcuts();
     initResizeHandler();
