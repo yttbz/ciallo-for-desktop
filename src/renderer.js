@@ -27,6 +27,37 @@ let expressionCycleInterval = 30;
 let idleAnimationEnabled = true;
 let modelScaleSetting = 0.85;
 
+// HUD 状态
+let hudContainer = null;
+let hudBg = null;
+let hudClockText = null;
+let hudExpressionText = null;
+let hudStatusText = null;
+let hudGreetingText = null;
+let hudGreetingTimer = null;
+let hudClockInterval = null;
+let currentExpressionName = '01_LianHei';
+let isClickThrough = false;
+let hudSettings = {
+  enableHUD: false,
+  hudShowClock: true,
+  hudShowExpressionName: true,
+  hudShowStatusIndicators: true,
+  hudShowGreetings: false,
+  hudPosition: 'bottom-right',
+  hudOpacity: 0.8,
+};
+
+const GREETINGS = [
+  'Ciallo～(∠?ω< )⌒★!',
+  '今日も一緒に遊ぼう！',
+  'いい天気ですね〜',
+  'お仕事お疲れさまです',
+  'こんにちは〜',
+  '一緒にいてくれてありがとう',
+  'ずっと見ていてね',
+];
+
 // 表情列表 (与 model3.json 中的 Name 对应)
 const EXPRESSIONS = [
   '01_LianHei',   // 脸黑
@@ -117,6 +148,16 @@ async function loadModel() {
 
   isLoaded = true;
   hideLoading();
+
+  // 追踪当前表情名称（HUD 使用）
+  if (model.expression) {
+    const origExpression = model.expression.bind(model);
+    model.expression = async (expr) => {
+      currentExpressionName = expr;
+      updateHudExpression();
+      return origExpression(expr);
+    };
+  }
 
   adjustWindowSize();
   return model;
@@ -386,6 +427,20 @@ function applySettings(settings) {
   if (settings.idleAnimation !== undefined) {
     idleAnimationEnabled = settings.idleAnimation;
   }
+
+  // 点击穿透状态同步（HUD 显示用）
+  if (settings.clickThrough !== undefined) {
+    isClickThrough = settings.clickThrough;
+    if (hudStatusText) updateHudStatus();
+  }
+
+  // 鼠标追踪状态同步（HUD 显示用）
+  if (settings.mouseTracking !== undefined) {
+    if (hudStatusText) updateHudStatus();
+  }
+
+  // HUD 设置
+  applyHudSettings(settings);
 }
 
 /**
@@ -413,7 +468,272 @@ function initResizeHandler() {
         window.innerHeight / 2
       );
     }
+    if (hudContainer && hudContainer.visible) {
+      layoutHud();
+    }
   });
+}
+
+// ======== HUD 系统 ========
+
+function initHud() {
+  if (!app || hudContainer) return;
+
+  hudContainer = new PIXI.Container();
+  hudContainer.visible = false;
+
+  // 背景面板
+  hudBg = new PIXI.Graphics();
+
+  // 文本样式
+  const textStyle = new PIXI.TextStyle({
+    fontFamily: 'Microsoft YaHei, PingFang SC, sans-serif',
+    fontSize: 13,
+    fill: '#ffffff',
+    fontWeight: '500',
+    dropShadow: true,
+    dropShadowColor: '#000000',
+    dropShadowBlur: 4,
+    dropShadowDistance: 1,
+  });
+
+  hudClockText = new PIXI.Text('', textStyle);
+  hudExpressionText = new PIXI.Text('', textStyle);
+
+  const statusStyle = new PIXI.TextStyle({
+    fontFamily: 'Microsoft YaHei, PingFang SC, sans-serif',
+    fontSize: 11,
+    fill: '#cccccc',
+    dropShadow: true,
+    dropShadowColor: '#000000',
+    dropShadowBlur: 3,
+    dropShadowDistance: 1,
+  });
+  hudStatusText = new PIXI.Text('', statusStyle);
+
+  const greetingStyle = new PIXI.TextStyle({
+    fontFamily: 'Microsoft YaHei, PingFang SC, sans-serif',
+    fontSize: 14,
+    fill: '#ff99bb',
+    fontWeight: '700',
+    dropShadow: true,
+    dropShadowColor: '#000000',
+    dropShadowBlur: 6,
+    dropShadowDistance: 1,
+  });
+  hudGreetingText = new PIXI.Text('', greetingStyle);
+  hudGreetingText.alpha = 0;
+  hudGreetingText.visible = false;
+
+  // 添加子元素：背景 + 文本
+  hudContainer.addChild(hudBg);
+  hudContainer.addChild(hudClockText);
+  hudContainer.addChild(hudExpressionText);
+  hudContainer.addChild(hudStatusText);
+  hudContainer.addChild(hudGreetingText);
+
+  app.stage.addChild(hudContainer);
+
+  // 启动时钟更新
+  hudClockInterval = setInterval(updateHudClock, 1000);
+  updateHudClock();
+
+  // 启动问候语系统
+  if (hudSettings.hudShowGreetings) {
+    scheduleNextGreeting();
+  }
+}
+
+function layoutHud() {
+  if (!hudContainer || !app) return;
+
+  const padding = 10;
+  const lineHeight = 20;
+
+  // 收集可见文本行
+  const lines = [];
+  if (hudSettings.hudShowClock) {
+    hudClockText.visible = true;
+    lines.push(hudClockText);
+  } else {
+    hudClockText.visible = false;
+  }
+  if (hudSettings.hudShowExpressionName) {
+    hudExpressionText.visible = true;
+    lines.push(hudExpressionText);
+  } else {
+    hudExpressionText.visible = false;
+  }
+  if (hudSettings.hudShowStatusIndicators) {
+    hudStatusText.visible = true;
+    lines.push(hudStatusText);
+  } else {
+    hudStatusText.visible = false;
+  }
+
+  // 计算面板尺寸
+  const maxWidth = Math.max(
+    ...lines.filter(t => t.visible).map(t => t.width),
+    hudGreetingText.visible ? hudGreetingText.width : 0,
+    100
+  );
+  const visibleLines = lines.filter(t => t.visible);
+  const panelHeight = visibleLines.length * lineHeight + padding * 2 + (hudGreetingText.visible ? lineHeight + 4 : 0);
+  const panelWidth = Math.min(maxWidth + padding * 2, app.renderer.width - padding * 2);
+  const windowW = app.renderer.width;
+  const windowH = app.renderer.height;
+
+  // 确定位置
+  let panelX, panelY;
+  switch (hudSettings.hudPosition) {
+    case 'top-left': panelX = padding; panelY = padding; break;
+    case 'top-right': panelX = windowW - panelWidth - padding; panelY = padding; break;
+    case 'bottom-left': panelX = padding; panelY = windowH - panelHeight - padding; break;
+    case 'bottom-right':
+    default: panelX = windowW - panelWidth - padding; panelY = windowH - panelHeight - padding; break;
+  }
+
+  // 绘制半透明背景
+  hudBg.clear();
+  hudBg.beginFill(0x000000, 1 - hudSettings.hudOpacity);
+  hudBg.drawRoundedRect(0, 0, panelWidth, panelHeight, 6);
+  hudBg.endFill();
+  hudBg.position.set(panelX, panelY);
+
+  // 定位文本行
+  let yPos = padding;
+  for (const text of lines) {
+    text.position.set(panelX + padding, panelY + yPos);
+    yPos += lineHeight;
+  }
+
+  // 问候语在面板下方
+  hudGreetingText.position.set(panelX + padding, panelY + yPos + 4);
+}
+
+function updateHudClock() {
+  if (!hudClockText) return;
+  const now = new Date();
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const seconds = String(now.getSeconds()).padStart(2, '0');
+  hudClockText.text = `${hours}:${minutes}:${seconds}`;
+}
+
+function updateHudExpression() {
+  if (!hudExpressionText) return;
+  const names = {
+    '01_LianHei': '普通',
+    '02_LianHei2': '普通2',
+    '03_GaoGuang': '高光',
+    '04_LiuHan': '流汗',
+    '05_LianHong': '脸红',
+    '06_KuMei': '哭眉',
+    '07_HengYan': '横眼',
+    '08_qYan': 'Q眼',
+  };
+  const displayName = names[currentExpressionName] || currentExpressionName;
+  hudExpressionText.text = `表情: ${displayName}`;
+  if (hudContainer && hudContainer.visible) layoutHud();
+}
+
+function updateHudStatus() {
+  if (!hudStatusText) return;
+  const indicators = [];
+  if (isClickThrough) indicators.push('穿透: 开');
+  if (mouseTrackingEnabled) indicators.push('追踪: 开');
+  hudStatusText.text = indicators.join(' | ') || '状态: 默认';
+  if (hudContainer && hudContainer.visible) layoutHud();
+}
+
+function scheduleNextGreeting() {
+  if (hudGreetingTimer) clearTimeout(hudGreetingTimer);
+  if (!hudSettings.hudShowGreetings) return;
+
+  const delay = 15000 + Math.random() * 30000;
+  hudGreetingTimer = setTimeout(showGreeting, delay);
+}
+
+function showGreeting() {
+  if (!hudGreetingText || !hudContainer || !app) return;
+
+  const msg = GREETINGS[Math.floor(Math.random() * GREETINGS.length)];
+  hudGreetingText.text = msg;
+  hudGreetingText.alpha = 0;
+  hudGreetingText.visible = true;
+
+  let fadeStep = 0;
+  const fadeDuration = 30;
+  let phase = 'fadein';
+  layoutHud();
+
+  const tickerFn = () => {
+    if (!hudGreetingText) return;
+
+    fadeStep++;
+    if (phase === 'fadein') {
+      hudGreetingText.alpha = Math.min(1, fadeStep / fadeDuration);
+      if (fadeStep >= fadeDuration) { phase = 'hold'; fadeStep = 0; }
+    } else if (phase === 'hold') {
+      if (fadeStep >= 180) { phase = 'fadeout'; fadeStep = 0; }
+    } else if (phase === 'fadeout') {
+      hudGreetingText.alpha = Math.max(0, 1 - fadeStep / fadeDuration);
+      if (fadeStep >= fadeDuration) {
+        hudGreetingText.visible = false;
+        hudGreetingText.alpha = 0;
+        app.ticker.remove(tickerFn);
+        layoutHud();
+        scheduleNextGreeting();
+        return;
+      }
+    }
+  };
+
+  app.ticker.add(tickerFn);
+}
+
+function applyHudSettings(settings) {
+  if (!settings) return;
+
+  let changed = false;
+  const hudKeys = [
+    'enableHUD', 'hudShowClock', 'hudShowExpressionName',
+    'hudShowStatusIndicators', 'hudShowGreetings', 'hudPosition', 'hudOpacity',
+  ];
+
+  for (const key of hudKeys) {
+    if (settings[key] !== undefined && settings[key] !== hudSettings[key]) {
+      hudSettings[key] = settings[key];
+      changed = true;
+    }
+  }
+
+  if (!changed) return;
+
+  if (hudContainer) {
+    hudContainer.visible = hudSettings.enableHUD;
+
+    if (hudSettings.enableHUD) {
+      // 更新子元素可见性
+      hudClockText.visible = hudSettings.hudShowClock;
+      hudExpressionText.visible = hudSettings.hudShowExpressionName;
+      hudStatusText.visible = hudSettings.hudShowStatusIndicators;
+
+      if (!hudSettings.hudShowGreetings) {
+        hudGreetingText.visible = false;
+        hudGreetingText.alpha = 0;
+        if (hudGreetingTimer) clearTimeout(hudGreetingTimer);
+      } else if (!hudGreetingText.visible && !hudGreetingTimer) {
+        scheduleNextGreeting();
+      }
+
+      layoutHud();
+    } else {
+      if (hudGreetingTimer) clearTimeout(hudGreetingTimer);
+    }
+  } else if (hudSettings.enableHUD) {
+    initHud();
+  }
 }
 
 // ======== 键盘快捷键 ========
@@ -484,6 +804,9 @@ async function main() {
     initMouseTracking(canvas);
     initKeyboardShortcuts();
     initResizeHandler();
+
+    // 初始化 HUD
+    initHud();
 
     // 启动动画
     startExpressionCycle();

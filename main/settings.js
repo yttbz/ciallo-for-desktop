@@ -37,6 +37,19 @@ function getDefaults() {
     autoStart: false,
     minimizeToTray: true,
     settingsWindowAlwaysOnTop: false,
+
+    // HUD
+    enableHUD: false,
+    hudShowClock: true,
+    hudShowExpressionName: true,
+    hudShowStatusIndicators: true,
+    hudShowGreetings: false,
+    hudPosition: 'bottom-right',
+    hudOpacity: 0.8,               // 0.3 ~ 1.0
+
+    // 托盘
+    showTrayIcon: true,
+    closeButtonAction: 'minimize-to-tray',  // 'minimize-to-tray' | 'quit'
   };
 }
 
@@ -99,6 +112,37 @@ function validate(raw) {
   }
   if (typeof raw.settingsWindowAlwaysOnTop === 'boolean') {
     result.settingsWindowAlwaysOnTop = raw.settingsWindowAlwaysOnTop;
+  }
+
+  // HUD
+  if (typeof raw.enableHUD === 'boolean') {
+    result.enableHUD = raw.enableHUD;
+  }
+  if (typeof raw.hudShowClock === 'boolean') {
+    result.hudShowClock = raw.hudShowClock;
+  }
+  if (typeof raw.hudShowExpressionName === 'boolean') {
+    result.hudShowExpressionName = raw.hudShowExpressionName;
+  }
+  if (typeof raw.hudShowStatusIndicators === 'boolean') {
+    result.hudShowStatusIndicators = raw.hudShowStatusIndicators;
+  }
+  if (typeof raw.hudShowGreetings === 'boolean') {
+    result.hudShowGreetings = raw.hudShowGreetings;
+  }
+  if (typeof raw.hudPosition === 'string' && ['top-left', 'top-right', 'bottom-left', 'bottom-right'].includes(raw.hudPosition)) {
+    result.hudPosition = raw.hudPosition;
+  }
+  if (typeof raw.hudOpacity === 'number') {
+    result.hudOpacity = Math.max(0.3, Math.min(1.0, raw.hudOpacity));
+  }
+
+  // 托盘
+  if (typeof raw.showTrayIcon === 'boolean') {
+    result.showTrayIcon = raw.showTrayIcon;
+  }
+  if (typeof raw.closeButtonAction === 'string' && ['minimize-to-tray', 'quit'].includes(raw.closeButtonAction)) {
+    result.closeButtonAction = raw.closeButtonAction;
   }
 
   result.version = SETTINGS_VERSION;

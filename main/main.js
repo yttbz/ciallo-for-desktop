@@ -102,6 +102,16 @@ function applySettingsToWindow(s) {
       sw.setAlwaysOnTop(s.settingsWindowAlwaysOnTop);
     }
   }
+
+  // 托盘图标显示/隐藏
+  if (s.showTrayIcon !== undefined) {
+    if (s.showTrayIcon && !tray) {
+      createTray();
+    } else if (!s.showTrayIcon && tray) {
+      tray.destroy();
+      tray = null;
+    }
+  }
 }
 
 // ======== 窗口管理 ========
@@ -147,6 +157,14 @@ function createWindow() {
   // 应用已加载的设置
   loadSettings();
 
+  // 最小化到托盘：拦截关闭按钮，隐藏到系统托盘
+  mainWindow.on('close', (event) => {
+    if (!isQuitting && currentSettings && currentSettings.minimizeToTray && currentSettings.closeButtonAction === 'minimize-to-tray') {
+      event.preventDefault();
+      mainWindow.hide();
+    }
+  });
+
   if (process.env.NODE_ENV === 'development') {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
@@ -188,37 +206,58 @@ function createTray() {
 }
 
 function updateTrayMenu() {
+  const scale = currentSettings ? currentSettings.modelScale : 0.85;
+
+  const sizeSubmenu = [
+    { label: 'S',  type: 'radio', checked: Math.abs(scale - 0.50) < 0.05, click: () => setModelScale(0.50) },
+    { label: 'M',  type: 'radio', checked: Math.abs(scale - 0.75) < 0.05, click: () => setModelScale(0.75) },
+    { label: 'L',  type: 'radio', checked: Math.abs(scale - 0.85) < 0.05, click: () => setModelScale(0.85) },
+    { label: 'XL', type: 'radio', checked: Math.abs(scale - 1.15) < 0.05, click: () => setModelScale(1.15) },
+    { label: 'XXL',type: 'radio', checked: Math.abs(scale - 1.50) < 0.05, click: () => setModelScale(1.50) },
+  ];
+
   const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'Ciallo～(∠?ω< )⌒★!',
-      enabled: false,
-    },
+    { label: 'Ciallo～(∠?ω< )⌒★!', enabled: false },
     { type: 'separator' },
     {
-      label: '显示/隐藏',
+      label: mainWindow && mainWindow.isVisible() ? '隐藏' : '显示',
       click: () => {
-        if (mainWindow.isVisible()) {
-          mainWindow.hide();
-        } else {
-          mainWindow.show();
-          mainWindow.focus();
-        }
+        if (!mainWindow) return;
+        if (mainWindow.isVisible()) { mainWindow.hide(); }
+        else { mainWindow.show(); mainWindow.focus(); }
       },
     },
     {
       label: '打开设置',
-      click: () => {
-        createSettingsWindow(mainWindow, currentSettings || {});
-      },
+      click: () => { createSettingsWindow(mainWindow, currentSettings || {}); },
     },
     { type: 'separator' },
     {
-      label: `点击穿透: ${isClickThrough ? '开' : '关'}`,
+      label: '置顶',
+      type: 'checkbox',
+      checked: currentSettings ? currentSettings.alwaysOnTop : true,
+      click: (menuItem) => {
+        if (!currentSettings) return;
+        currentSettings.alwaysOnTop = menuItem.checked;
+        saveSettings(currentSettings);
+      },
+    },
+    {
+      label: 'HUD',
+      type: 'checkbox',
+      checked: currentSettings ? currentSettings.enableHUD : false,
+      click: (menuItem) => {
+        if (!currentSettings) return;
+        currentSettings.enableHUD = menuItem.checked;
+        saveSettings(currentSettings);
+      },
+    },
+    {
+      label: '点击穿透',
       type: 'checkbox',
       checked: isClickThrough,
       click: (menuItem) => {
         toggleClickThrough(menuItem.checked);
-        // 更新设置
         if (currentSettings) {
           currentSettings.clickThrough = menuItem.checked;
           saveSettings(currentSettings);
@@ -227,15 +266,14 @@ function updateTrayMenu() {
     },
     { type: 'separator' },
     {
-      label: '关于',
-      click: showAboutDialog,
+      label: '大小',
+      submenu: sizeSubmenu,
     },
+    { type: 'separator' },
+    { label: '关于', click: showAboutDialog },
     {
       label: '退出',
-      click: () => {
-        isQuitting = true;
-        app.quit();
-      },
+      click: () => { isQuitting = true; app.quit(); },
     },
   ]);
 
@@ -254,6 +292,14 @@ function toggleClickThrough(enable) {
     }
   }
   updateTrayMenu();
+}
+
+// ======== 模型大小快捷设置 ========
+
+function setModelScale(scale) {
+  if (!currentSettings) return;
+  currentSettings.modelScale = scale;
+  saveSettings(currentSettings);
 }
 
 // ======== 关于对话框 ========

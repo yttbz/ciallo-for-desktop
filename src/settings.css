@@ -427,3 +427,33 @@ body {
   border-color: #ff5588;
   color: white;
 }
+
+/* ======== 下拉菜单 (Dropdown) ======== */
+
+.dropdown {
+  padding: 6px 10px;
+  border: 2px solid var(--pink-lighter);
+  border-radius: var(--radius-sm);
+  background: var(--bg-white);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+  transition: border-color var(--transition);
+  min-width: 120px;
+}
+
+.dropdown:hover {
+  border-color: var(--pink-light);
+}
+
+.dropdown:focus {
+  border-color: var(--pink);
+}
+
+/* ======== 数字滑块值加宽 ======== */
+
+.slider-value-wide {
+  min-width: 50px;
+}
