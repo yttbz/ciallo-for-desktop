@@ -1,365 +1,593 @@
 /**
- * CialloForDesktop - 会话状态机
+ * main/state.js — Session State Machine for Claude Code Sessions
  *
- * 跟踪 Claude Code 等 Agent 的会话状态。
- * 从 clawd-on-desk 的 state.js 移植/精简。
+ * Tracks lifecycle states of Claude Code CLI sessions including
+ * subagent juggling, process health, and badge derivation.
+ *
+ * States (by priority, highest first):
+ *   notification > attention > working > thinking > juggling > idle > sleeping
+ *
+ * Badges: running, done, interrupted, idle
+ *
+ * Events:
+ *   UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure,
+ *   Stop, SessionEnd, SubagentStart, SubagentStop,
+ *   PermissionRequest, Notification
+ *
+ * Ported from clawd-on-desk's state.js.
+ *
+ * @module main/state
  */
 
-const MAX_SESSIONS = 20;
-const STALE_CHECK_INTERVAL = 10000; // 10 秒
-const STALE_SESSION_MS = 300000;    // 5 分钟无更新视为陈旧
+'use strict';
 
-// 事件类型
-const EVENTS = {
-  USER_PROMPT: 'UserPromptSubmit',
-  PRE_TOOL_USE: 'PreToolUse',
-  POST_TOOL_USE: 'PostToolUse',
-  POST_TOOL_FAIL: 'PostToolUseFailure',
-  STOP: 'Stop',
-  SESSION_END: 'SessionEnd',
-  SUBAGENT_START: 'SubagentStart',
-  SUBAGENT_STOP: 'SubagentStop',
-  PERMISSION_REQ: 'PermissionRequest',
-  NOTIFICATION: 'Notification',
-};
+// ─── Constants ───────────────────────────────────────────────────────────────
 
-// 状态优先级（数字越大优先级越高）
-const STATE_PRIORITY = {
-  'notification': 100,
-  'attention': 90,
-  'working': 80,
-  'juggling': 75,
-  'thinking': 70,
-  'idle': 10,
-  'sleeping': 0,
-};
+/** All valid session states ordered by display priority (highest first). */
+const STATE_PRIORITY = Object.freeze([
+  'notification',
+  'attention',
+  'working',
+  'thinking',
+  'juggling',
+  'idle',
+  'sleeping',
+]);
 
-// 默认状态
-const DEFAULT_STATE = 'idle';
+/** Valid state values as a Set for O(1) lookup. */
+const VALID_STATES = new Set(STATE_PRIORITY);
+
+/** Valid badge values. */
+const VALID_BADGES = Object.freeze(['running', 'done', 'interrupted', 'idle']);
 
 /**
- * 创建状态管理器
- * @param {object} opts - { log, onStateChange(stateName) }
+ * Event type → default state mapping.
+ * null means the state is context-dependent and will not be auto-derived.
  */
-function createStateManager(opts = {}) {
-  const log = opts.log || console.log;
-  const onStateChange = opts.onStateChange || (() => {});
+const EVENT_TO_STATE = {
+  UserPromptSubmit:   'working',
+  PreToolUse:         'thinking',
+  PostToolUse:        null,           // context-dependent; caller should set state explicitly
+  PostToolUseFailure: null,           // context-dependent
+  Stop:               'idle',
+  SessionEnd:         null,           // triggers deletion, not a state transition
+  SubagentStart:      'juggling',
+  SubagentStop:       null,           // context-dependent; caller decides the return state
+  PermissionRequest:  'attention',
+  Notification:       'notification',
+};
+
+/** Maximum number of recent events retained per session. */
+const MAX_RECENT_EVENTS = 20;
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Check whether a process is alive using signal-0 (does not actually signal).
+ *
+ * Uses `process.kill(pid, 0)` which probes process existence without sending
+ * a signal. On POSIX, ESRCH means "no such process"; any other error
+ * (EPERM, EACCES) means the process exists but the caller lacks permission.
+ * On Windows the same semantics apply — we treat every code other than ESRCH
+ * as "process exists".
+ *
+ * @param {number} pid - Process ID to check
+ * @returns {boolean} true if the process exists (or access is denied)
+ */
+function isProcessAlive(pid) {
+  if (typeof pid !== 'number' || pid <= 0 || !Number.isFinite(pid)) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // ESRCH = no such process. Everything else (EPERM, EACCES, …) means the
+    // process exists — we just don't have permission / can't signal it.
+    return err.code !== 'ESRCH';
+  }
+}
+
+/**
+ * Create a fresh default session record.
+ *
+ * All fields are initialised to safe zero/empty values so callers never deal
+ * with undefined access.
+ *
+ * @param {string} id - Unique session identifier
+ * @returns {object} Default session record
+ */
+function createDefaultSession(id) {
+  return {
+    // Identity
+    id,
+    agentId: '',
+
+    // Lifecycle
+    state: 'idle',
+    badge: 'idle',
+
+    // Metadata
+    sessionTitle: '',
+    cwd: '',
+    model: '',
+    provider: '',
+    host: '',
+    wslDistro: '',
+    headless: false,
+    platform: process.platform,
+
+    // Resource tracking
+    contextUsage: { used: 0, limit: 0, percent: 0 },
+
+    // Event log
+    recentEvents: [],
+
+    // Process info
+    agentPid: null,
+    sourcePid: null,
+    pidReachable: false,
+
+    // Timestamp
+    updatedAt: Date.now(),
+
+    // Completion & display
+    requiresCompletionAck: false,
+    displayHint: '',
+    resumeState: '',
+
+    // ── Internal bookkeeping (not part of the public data model) ──
+    /** @private Number of active background (subagent) tasks */
+    _backgroundTasks: 0,
+  };
+}
+
+/**
+ * Derive a badge from the session's current state and recent events tail.
+ *
+ * Badge logic:
+ *   - Active processing states (working, thinking, juggling, attention,
+ *     notification) → `running`
+ *   - Sleeping → `idle`
+ *   - Idle state whose last event is `Stop` with **no** background tasks
+ *     → `interrupted`
+ *   - Idle state whose last event is `Stop` **with** background tasks
+ *     → `running` (still-alive subagents / hooks)
+ *   - Otherwise idle → `idle`
+ *
+ * @param {object} session - Session record (read-only)
+ * @returns {string} One of: 'running', 'done', 'interrupted', 'idle'
+ */
+function deriveBadge(session) {
+  const { state, recentEvents } = session;
+  const tail = recentEvents.slice(-3);
+
+  // No events at all → idle
+  if (tail.length === 0) return 'idle';
+
+  const lastType = tail[tail.length - 1].type;
+
+  // Active processing states → running
+  if (state === 'working'   ||
+      state === 'thinking'  ||
+      state === 'juggling'  ||
+      state === 'attention' ||
+      state === 'notification') {
+    return 'running';
+  }
+
+  // Sleeping → idle
+  if (state === 'sleeping') return 'idle';
+
+  // Idle — check how we arrived here
+  if (state === 'idle') {
+    if (lastType === 'Stop') {
+      // If background tasks are still active, the session isn't really done
+      return session._backgroundTasks > 0 ? 'running' : 'interrupted';
+    }
+    return 'idle';
+  }
+
+  return 'idle';
+}
+
+/**
+ * Resolve the global pet display state from a collection of sessions.
+ *
+ * Iterates all sessions and returns the state with the highest display
+ * priority:
+ *   notification > attention > working > thinking > juggling > idle > sleeping
+ *
+ * Used to decide what "mood" or "activity" indicator the desktop pet should
+ * show when multiple sessions exist simultaneously.
+ *
+ * @param {object[]|object<string,object>} sessions - Array of session objects,
+ *        or an object map keyed by session ID (from getSnapshot().sessions).
+ * @returns {string} The highest-priority state found, or `'sleeping'` if empty.
+ */
+function resolvePetDisplayState(sessions) {
+  if (!sessions) return 'sleeping';
+
+  const iterable = Array.isArray(sessions)
+    ? sessions
+    : Object.values(sessions);
+
+  if (iterable.length === 0) return 'sleeping';
+
+  for (const state of STATE_PRIORITY) {
+    for (const s of iterable) {
+      if (s && s.state === state) return state;
+    }
+  }
+
+  return 'sleeping';
+}
+
+// ─── State Manager Factory ───────────────────────────────────────────────────
+
+/**
+ * Create a session state manager instance.
+ *
+ * Manages a collection of Claude Code sessions with lifecycle-aware state
+ * transitions, process-liveness checks, and event tracking.
+ *
+ * @returns {object} State manager API:
+ *   - updateSession(sessionId, state?, event?, opts?)
+ *   - getSnapshot()
+ *   - cleanStaleSessions()
+ *   - getAllSessions()
+ *   - getSession(sessionId)
+ */
+function createStateManager() {
+  /** @type {Map<string, object>} */
   const sessions = new Map();
-  let currentPetState = DEFAULT_STATE;
-  let staleTimer = null;
-  let snapshotSig = '';
+
+  /** @type {string[]} Insertion-order array. */
+  const orderedIds = [];
+
+  // ─── Internal helpers ────────────────────────────────────────────────
 
   /**
-   * 检查进程是否存活
+   * Get an existing session or create a new default record.
+   *
+   * @param {string} id
+   * @returns {object} Session record (live reference — mutate with care)
    */
-  function isProcessAlive(pid) {
-    if (!pid || pid <= 0) return false;
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (e) {
-      return e.code === 'EPERM'; // 进程存在但权限不足
-    }
-  }
-
-  /**
-   * 从事件中派生 badge
-   */
-  function deriveBadge(recentEvents) {
-    if (!recentEvents || recentEvents.length === 0) return 'idle';
-    const last = recentEvents[recentEvents.length - 1];
-    if (!last) return 'idle';
-    switch (last.type) {
-      case EVENTS.STOP:
-      case EVENTS.SESSION_END:
-        return 'done';
-      case EVENTS.POST_TOOL_FAIL:
-        return 'interrupted';
-      case EVENTS.PRE_TOOL_USE:
-      case EVENTS.POST_TOOL_USE:
-      case EVENTS.USER_PROMPT:
-        return 'running';
-      default:
-        return 'idle';
-    }
-  }
-
-  /**
-   * 派生会话显示状态
-   */
-  function deriveSessionState(session) {
-    if (!session || !session.recentEvents || session.recentEvents.length === 0) {
-      return DEFAULT_STATE;
-    }
-    const last = session.recentEvents[session.recentEvents.length - 1];
-    if (!last) return DEFAULT_STATE;
-
-    if (session.badge === 'done' || session.badge === 'interrupted') {
-      return 'idle';
-    }
-
-    switch (last.type) {
-      case EVENTS.PRE_TOOL_USE:
-        return 'working';
-      case EVENTS.POST_TOOL_USE:
-        return 'thinking';
-      case EVENTS.USER_PROMPT:
-        return 'idle';
-      case EVENTS.SUBAGENT_START:
-        return 'juggling';
-      case EVENTS.PERMISSION_REQ:
-        return 'notification';
-      case EVENTS.NOTIFICATION:
-        return 'notification';
-      default:
-        return 'idle';
-    }
-  }
-
-  /**
-   * 解析所有会话中最高优先级的宠物显示状态
-   */
-  function resolvePetState() {
-    let highestState = DEFAULT_STATE;
-    let highestPriority = STATE_PRIORITY[DEFAULT_STATE] || 0;
-
-    for (const session of sessions.values()) {
-      const s = deriveSessionState(session);
-      const p = STATE_PRIORITY[s] || 0;
-      if (p > highestPriority) {
-        highestPriority = p;
-        highestState = s;
-      }
-    }
-
-    return highestState;
-  }
-
-  /**
-   * 应用宠物状态（发生变化时通知）
-   */
-  function applyPetState(newState) {
-    if (newState !== currentPetState) {
-      const old = currentPetState;
-      currentPetState = newState;
-      log(`[State] ${old} → ${newState}`);
-      onStateChange(newState);
-    }
-  }
-
-  /**
-   * 更新或创建会话
-   */
-  function updateSession(sessionId, state, event, opts = {}) {
-    const now = Date.now();
-    let session = sessions.get(sessionId);
-
+  function ensureSession(id) {
+    let session = sessions.get(id);
     if (!session) {
-      if (sessions.size >= MAX_SESSIONS) {
-        log(`[State] Max sessions (${MAX_SESSIONS}) reached, dropping ${sessionId}`);
-        return;
+      session = createDefaultSession(id);
+      sessions.set(id, session);
+      orderedIds.push(id);
+    }
+    return session;
+  }
+
+  /**
+   * Remove a session from tracking entirely.
+   *
+   * @param {string} id
+   */
+  function deleteSession(id) {
+    sessions.delete(id);
+    const idx = orderedIds.indexOf(id);
+    if (idx !== -1) orderedIds.splice(idx, 1);
+  }
+
+  // ─── Public API ──────────────────────────────────────────────────────
+
+  /**
+   * Central dispatch for session updates.
+   *
+   * Every call (except `SessionEnd`) creates the session if it doesn't exist.
+   * Events are appended to `recentEvents` (capped at the last 20), the
+   * state is updated (either from the explicit `state` argument or derived
+   * from the event type), and the badge is re-derived from the event tail.
+   *
+   * @param {string}        sessionId  - Session to update
+   * @param {string}        [state]    - New session state. If omitted, the state
+   *                                     is auto-derived from `event.type`. If
+   *                                     provided, the caller explicitly controls
+   *                                     the transition.
+   * @param {string|object} [event]    - Event to record. Either a string (event
+   *                                     type) or an object `{ type, data?, timestamp? }`.
+   * @param {object}        [opts]     - Additional session-field overrides.
+   *   Recognised keys: agentId, sessionTitle, cwd, model, provider, host,
+   *   wslDistro, headless, platform, contextUsage, agentPid, sourcePid,
+   *   requiresCompletionAck, displayHint, resumeState.
+   *   Special key `force: true` bypasses the Stop completion gate.
+   *
+   * Special event handling:
+   *   - `SubagentStart`  — increments the background-task counter (pushes juggling)
+   *   - `SubagentStop`   — decrements the counter
+   *   - `SessionEnd`     — deletes the session immediately (no state change)
+   *   - `Stop`           — completion gate: if background tasks are active, keeps
+   *                        the state at `working` unless `opts.force === true`
+   */
+  function updateSession(sessionId, state, event, opts) {
+    // ── Normalise event ────────────────────────────────────────────────
+    let eventType = null;
+    let eventData = {};
+    let eventTimestamp = null;
+
+    if (event) {
+      if (typeof event === 'string') {
+        eventType = event;
+      } else if (typeof event === 'object' && event !== null) {
+        eventType = event.type || null;
+        eventData = event.data || {};
+        eventTimestamp = event.timestamp || null;
       }
-      session = {
-        id: sessionId,
-        agentId: opts.agent_id || 'claude-code',
-        state: DEFAULT_STATE,
-        badge: 'idle',
-        sessionTitle: opts.session_title || '',
-        cwd: opts.cwd || '',
-        model: opts.model || '',
-        provider: opts.provider || '',
-        host: opts.host || '',
-        wslDistro: opts.wsl_distro || '',
-        headless: !!opts.headless,
-        platform: opts.platform || '',
-        contextUsage: opts.context_usage || { used: 0, limit: 0, percent: 0 },
-        recentEvents: [],
-        agentPid: opts.agent_pid || 0,
-        sourcePid: opts.source_pid || 0,
-        pidReachable: true,
-        updatedAt: now,
-        createdAt: now,
-        requiresCompletionAck: false,
-        displayHint: '',
-        resumeState: null,
-      };
-      sessions.set(sessionId, session);
-      log(`[State] New session: ${sessionId} (agent: ${session.agentId})`);
     }
 
-    // 更新 metadata
-    if (opts.session_title) session.sessionTitle = opts.session_title;
-    if (opts.cwd) session.cwd = opts.cwd;
-    if (opts.model) session.model = opts.model;
-    if (opts.provider) session.provider = opts.provider;
-    if (opts.host) session.host = opts.host;
-    if (opts.wsl_distro) session.wslDistro = opts.wsl_distro;
-    if (opts.headless !== undefined) session.headless = opts.headless;
-    if (opts.platform) session.platform = opts.platform;
-    if (opts.context_usage) session.contextUsage = opts.context_usage;
-    if (opts.agent_pid) session.agentPid = opts.agent_pid;
-    if (opts.source_pid) session.sourcePid = opts.source_pid;
-
-    // 处理事件
-    const evt = { type: event, timestamp: now, data: opts };
-    session.recentEvents.push(evt);
-    if (session.recentEvents.length > 20) {
-      session.recentEvents.shift();
-    }
-
-    // 特殊事件处理
-    if (event === EVENTS.SESSION_END) {
-      sessions.delete(sessionId);
-      log(`[State] Session ended: ${sessionId}`);
-      applyPetState(resolvePetState());
+    // ── SessionEnd → delete immediately, no further processing ────────
+    if (eventType === 'SessionEnd') {
+      const existing = sessions.get(sessionId);
+      if (existing) {
+        // Record the termination event before removal
+        existing.recentEvents.push({
+          type: 'SessionEnd',
+          timestamp: eventTimestamp || Date.now(),
+          data: eventData,
+        });
+        existing.updatedAt = Date.now();
+      }
+      deleteSession(sessionId);
       return;
     }
 
-    if (event === EVENTS.SUBAGENT_START) {
-      session.resumeState = session.state;
-      session.state = 'juggling';
-    } else if (event === EVENTS.SUBAGENT_STOP && session.resumeState) {
-      session.state = session.resumeState;
-      session.resumeState = null;
-    } else if (event === EVENTS.PERMISSION_REQ) {
-      session.state = 'notification';
-    } else if (event === EVENTS.STOP) {
-      // Stop 完成门控: 如果有后台任务，不立即设为 idle
-      const bgTasks = opts.background_tasks_count || 0;
-      const stopHook = opts.stop_hook_active || false;
-      if (bgTasks > 0 || stopHook) {
-        session.state = 'working';
-        session.requiresCompletionAck = true;
-      } else {
-        session.state = 'idle';
-        session.badge = 'done';
+    // ── Ensure session exists ──────────────────────────────────────────
+    const session = ensureSession(sessionId);
+
+    // ── Record event ───────────────────────────────────────────────────
+    if (eventType) {
+      session.recentEvents.push({
+        type: eventType,
+        timestamp: eventTimestamp || Date.now(),
+        data: eventData,
+      });
+      // Keep only the last N events
+      if (session.recentEvents.length > MAX_RECENT_EVENTS) {
+        session.recentEvents = session.recentEvents.slice(-MAX_RECENT_EVENTS);
       }
-    } else {
-      session.state = state || DEFAULT_STATE;
-    }
 
-    session.badge = deriveBadge(session.recentEvents);
-    session.updatedAt = now;
+      // ── Event-specific side effects ──────────────────────────────────
+      switch (eventType) {
+        case 'SubagentStart':
+          session._backgroundTasks += 1;
+          // When a subagent starts, always transition to juggling
+          // (unless the caller provided an explicit state override)
+          if (!state) session.state = 'juggling';
+          break;
 
-    // 更新宠物显示状态
-    applyPetState(resolvePetState());
-  }
+        case 'SubagentStop':
+          session._backgroundTasks = Math.max(0, session._backgroundTasks - 1);
+          // On SubagentStop, the caller may provide a state to return to.
+          // If not provided, leave the state as-is (the caller should handle it).
+          break;
 
-  /**
-   * 清理陈旧会话
-   */
-  function cleanStaleSessions() {
-    const now = Date.now();
-    let changed = false;
+        case 'Stop': {
+          // ── Completion gate ────────────────────────────────────────────
+          // If background tasks are still running, don't let the session
+          // slide into idle/done — keep it in working state so the badge
+          // stays "running". The caller can force-complete with opts.force.
+          const bgActive = session._backgroundTasks > 0;
+          if (bgActive && !(opts && opts.force)) {
+            // Force working regardless of what `state` or EVENT_TO_STATE says
+            session.state = 'working';
+          }
+          break;
+        }
 
-    for (const [id, session] of sessions.entries()) {
-      // 检查进程存活
-      const alive = isProcessAlive(session.agentPid) || isProcessAlive(session.sourcePid);
-      session.pidReachable = alive;
+        case 'PostToolUse':
+        case 'PostToolUseFailure':
+          // These events never auto-derive a state; the caller must
+          // provide an explicit `state` argument or accept the current one.
+          // However, if the current state is 'thinking' (from PreToolUse)
+          // and a PostToolUse arrives, move back to 'working'.
+          if (!state && eventType === 'PostToolUse' && session.state === 'thinking') {
+            session.state = 'working';
+          }
+          if (!state && eventType === 'PostToolUseFailure' && session.state === 'thinking') {
+            session.state = 'working';
+          }
+          break;
 
-      // 检查超时
-      const elapsed = now - session.updatedAt;
-      if (!alive && elapsed > STALE_SESSION_MS) {
-        sessions.delete(id);
-        log(`[State] Stale session removed: ${id} (no process, ${Math.round(elapsed/1000)}s inactive)`);
-        changed = true;
-      } else if (!alive && session.badge === 'done') {
-        sessions.delete(id);
-        log(`[State] Completed session cleaned: ${id}`);
-        changed = true;
+        default:
+          break;
       }
     }
 
-    if (changed) {
-      applyPetState(resolvePetState());
+    // ── Resolve session state ──────────────────────────────────────────
+    // Only apply state changes if the event-specific handlers above haven't
+    // already forced a state (e.g. SubagentStart, Stop gate).
+    const gateOverrode = (eventType === 'Stop' &&
+                          session.state === 'working' &&
+                          session._backgroundTasks > 0 &&
+                          !(opts && opts.force));
+    const subagentOverrode = (eventType === 'SubagentStart' && !state);
+
+    if (!gateOverrode && !subagentOverrode) {
+      if (state && VALID_STATES.has(state)) {
+        session.state = state;
+      } else if (eventType && !state) {
+        // Auto-derive from event type
+        const derived = EVENT_TO_STATE[eventType];
+        if (derived && VALID_STATES.has(derived)) {
+          session.state = derived;
+        }
+      }
     }
+    // else: both null/undefined — leave state unchanged
+
+    // ── Update badge ───────────────────────────────────────────────────
+    session.badge = deriveBadge(session);
+
+    // ── Apply optional field overrides ─────────────────────────────────
+    if (opts && typeof opts === 'object') {
+      // Whitelist of fields that may be set via opts
+      const FIELD_MAP = {
+        agentId:             1,
+        sessionTitle:        1,
+        cwd:                 1,
+        model:               1,
+        provider:            1,
+        host:                1,
+        wslDistro:           1,
+        headless:            1,
+        platform:            1,
+        agentPid:            1,
+        sourcePid:           1,
+        requiresCompletionAck: 1,
+        displayHint:         1,
+        resumeState:         1,
+      };
+
+      for (const key of Object.keys(opts)) {
+        if (key === 'force') continue;             // internal control flag
+        if (key === 'contextUsage') continue;      // handled separately
+        if (FIELD_MAP[key] && opts[key] !== undefined) {
+          session[key] = opts[key];
+        }
+      }
+
+      // Validate and sanitise contextUsage shape
+      if (opts.contextUsage !== undefined) {
+        const cu = opts.contextUsage;
+        if (!cu || typeof cu !== 'object') {
+          session.contextUsage = { used: 0, limit: 0, percent: 0 };
+        } else {
+          session.contextUsage = {
+            used:    Number.isFinite(cu.used)    ? cu.used    : 0,
+            limit:   Number.isFinite(cu.limit)   ? cu.limit   : 0,
+            percent: Number.isFinite(cu.percent) ? cu.percent : 0,
+          };
+        }
+      }
+    }
+
+    // ── Check PID reachability ──────────────────────────────────────────
+    session.pidReachable = isProcessAlive(session.agentPid || session.sourcePid);
+
+    // ── Update timestamp ───────────────────────────────────────────────
+    session.updatedAt = Date.now();
   }
 
   /**
-   * 启动陈旧清理定时器
-   */
-  function startStaleCleanup() {
-    stopStaleCleanup();
-    staleTimer = setInterval(cleanStaleSessions, STALE_CHECK_INTERVAL);
-  }
-
-  function stopStaleCleanup() {
-    if (staleTimer) {
-      clearInterval(staleTimer);
-      staleTimer = null;
-    }
-  }
-
-  /**
-   * 获取会话快照（序列化用）
+   * Return a serialisable snapshot of all tracked sessions.
+   *
+   * Sessions are grouped into:
+   *   - `foreground` / `headless` (by the session's `headless` flag)
+   *   - `provider:<name>` (one group per unique provider value)
+   *   - `host:<host>` (one group per unique host value)
+   *
+   * @returns {{ sessions: object<string,object>, orderedIds: string[], groups: object }}
    */
   function getSnapshot() {
-    const result = {};
-    const orderedIds = [];
-    for (const [id, session] of sessions.entries()) {
-      orderedIds.push(id);
-      result[id] = {
-        id: session.id,
-        agentId: session.agentId,
-        state: session.state,
-        badge: session.badge,
-        sessionTitle: session.sessionTitle,
-        cwd: session.cwd,
-        model: session.model,
-        provider: session.provider,
-        host: session.host,
-        wslDistro: session.wslDistro,
-        headless: session.headless,
-        platform: session.platform,
-        contextUsage: session.contextUsage,
-        updatedAt: session.updatedAt,
-        createdAt: session.createdAt,
-        recentEventsCount: session.recentEvents.length,
-        pidReachable: session.pidReachable,
-        requiresCompletionAck: session.requiresCompletionAck,
-        displayHint: session.displayHint,
-      };
+    /** @type {object<string,object>} */
+    const snapshot = {};
+    for (const [id, s] of sessions) {
+      snapshot[id] = Object.assign({}, s);
     }
+
+    // Derive groups from session attributes
+    /** @type {object<string,string[]>} */
+    const groups = {};
+    for (const [id, s] of sessions) {
+      // Group by headless vs foreground
+      const hgKey = s.headless ? 'headless' : 'foreground';
+      if (!groups[hgKey]) groups[hgKey] = [];
+      groups[hgKey].push(id);
+
+      // Group by provider (if set)
+      if (s.provider) {
+        const provKey = 'provider:' + s.provider;
+        if (!groups[provKey]) groups[provKey] = [];
+        groups[provKey].push(id);
+      }
+
+      // Group by host (if set)
+      if (s.host) {
+        const hostKey = 'host:' + s.host;
+        if (!groups[hostKey]) groups[hostKey] = [];
+        groups[hostKey].push(id);
+      }
+    }
+
     return {
-      sessions: result,
-      orderedIds,
-      petState: currentPetState,
-      sessionCount: orderedIds.length,
+      sessions: snapshot,
+      orderedIds: orderedIds.slice(), // defensive copy
+      groups,
     };
   }
 
   /**
-   * 获取所有会话
+   * Check all tracked sessions for process liveness.
+   *
+   * Iterates every session, checks its `agentPid` (falling back to
+   * `sourcePid`) via signal-0. If the PID is unreachable, marks the session
+   * as `sleeping` with `badge: 'interrupted'` and `pidReachable: false`.
+   *
+   * @returns {string[]} IDs of sessions that were marked stale
+   */
+  function cleanStaleSessions() {
+    /** @type {string[]} */
+    const staleIds = [];
+
+    for (const [id, s] of sessions) {
+      const pid = s.agentPid || s.sourcePid;
+      if (pid && !isProcessAlive(pid)) {
+        s.state = 'sleeping';
+        s.badge = 'interrupted';
+        s.pidReachable = false;
+        s.updatedAt = Date.now();
+        staleIds.push(id);
+      }
+    }
+
+    return staleIds;
+  }
+
+  /**
+   * Return a shallow copy of all session objects (safe for serialisation).
+   *
+   * @returns {object[]}
    */
   function getAllSessions() {
-    return Array.from(sessions.values());
+    return Array.from(sessions.values()).map(s => Object.assign({}, s));
   }
 
   /**
-   * 获取单个会话
+   * Return a shallow copy of a single session, or null if not found.
+   *
+   * @param {string} sessionId
+   * @returns {object|null}
    */
   function getSession(sessionId) {
-    return sessions.get(sessionId) || null;
+    const s = sessions.get(sessionId);
+    return s ? Object.assign({}, s) : null;
   }
 
-  /**
-   * 获取当前宠物状态
-   */
-  function getPetState() {
-    return currentPetState;
-  }
-
+  // ── Export ────────────────────────────────────────────────────────────
   return {
     updateSession,
     getSnapshot,
     cleanStaleSessions,
-    startStaleCleanup,
-    stopStaleCleanup,
     getAllSessions,
     getSession,
-    getPetState,
-    isProcessAlive,
   };
 }
 
-module.exports = { createStateManager, EVENTS, STATE_PRIORITY };
+// ─── Module Exports ──────────────────────────────────────────────────────────
+
+module.exports = {
+  createStateManager,
+  isProcessAlive,
+  resolvePetDisplayState,
+  // Constants for external consumers
+  STATE_PRIORITY:       STATE_PRIORITY.slice(),
+  VALID_STATES:         Array.from(VALID_STATES),
+  VALID_BADGES:         VALID_BADGES.slice(),
+  EVENT_TO_STATE:       Object.freeze(Object.assign({}, EVENT_TO_STATE)),
+  MAX_RECENT_EVENTS,
+};

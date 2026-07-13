@@ -51,10 +51,8 @@ function createSettingsWindow(parentWindow, windowSettings = {}) {
       parentWindow.focus();
       // 某些 Windows 版本在模态对话框关闭后会丢掉父窗口置顶
       if (windowSettings.alwaysOnTop) {
-        // 使用高级别确保恢复
         try {
-          parentWindow.setAlwaysOnTop(true, 'screen-saver');
-          parentWindow.setAlwaysOnTop(true, 'normal');
+          parentWindow.setAlwaysOnTop(true, 'pop-up-menu');
         } catch (_) {
           parentWindow.setAlwaysOnTop(true);
         }

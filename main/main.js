@@ -78,12 +78,11 @@ function saveSettings(snapshot) {
 function applySettingsToWindow(s) {
   if (!mainWindow) return;
 
-  // 置顶 (使用高级别确保恢复)
+  // 置顶 (Windows 使用 pop-up-menu 级别，与 clawd-on-desk 一致)
   if (s.alwaysOnTop !== undefined) {
     if (s.alwaysOnTop) {
       try {
-        mainWindow.setAlwaysOnTop(true, 'screen-saver');
-        mainWindow.setAlwaysOnTop(true, 'normal');
+        mainWindow.setAlwaysOnTop(true, 'pop-up-menu');
       } catch (_) {
         mainWindow.setAlwaysOnTop(true);
       }

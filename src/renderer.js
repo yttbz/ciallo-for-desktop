@@ -7,6 +7,7 @@
 
 import * as PIXI from 'pixi.js';
 import { Live2DModel } from 'pixi-live2d-display/cubism4';
+import { playCialloChime, playNotification, playComplete } from './notification-sound.js';
 
 // ======== 全局状态 ========
 
@@ -494,6 +495,12 @@ function initPetStateListener() {
           };
           hudExpressionText.text = `状态: ${names[expression] || expression}`;
           if (hudContainer && hudContainer.visible) layoutHud();
+        }
+        // 播放 Ciallo 提示音
+        if (stateName === 'attention') {
+          playComplete();
+        } else if (stateName === 'notification') {
+          playCialloChime();
         }
       }
     });
