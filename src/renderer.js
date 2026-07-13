@@ -473,10 +473,12 @@ const STATE_TO_EXPRESSION = {
   'idle':         '01_LianHei',    // 默认表情
   'working':      '02_LianHei2',   // 工作/忙碌
   'thinking':     '03_GaoGuang',   // 思考中
-  'attention':    '05_LianHong',   // 完成时脸红
-  'notification': '04_LiuHan',     // 需要用户操作(流汗)
+  'attention':    '06_KuMei',      // 完成任务/需要关注 → 伤心(哭眉)
+  'notification': '06_KuMei',      // 需要用户操作 → 伤心(哭眉)
   'sleeping':     '01_LianHei',    // 空闲休眠
-  'juggling':     '06_KuMei',      // 多任务处理
+  'juggling':     '02_LianHei2',   // 多任务处理
+  'error':        '07_HengYan',    // 报错/失败 → 厌恶(横眼)
+  'sweeping':     '01_LianHei',    // 清理上下文
   'yawning':      '07_HengYan',    // 要打哈欠了
 };
 
@@ -490,17 +492,19 @@ function initPetStateListener() {
           const names = {
             '01_LianHei': '普通', '02_LianHei2': '普通2',
             '03_GaoGuang': '高光', '04_LiuHan': '流汗',
-            '05_LianHong': '脸红', '06_KuMei': '哭眉',
-            '07_HengYan': '横眼', '08_qYan': 'Q眼',
+            '05_LianHong': '脸红', '06_KuMei': '伤心',
+            '07_HengYan': '厌恶', '08_qYan': 'Q眼',
           };
           hudExpressionText.text = `状态: ${names[expression] || expression}`;
           if (hudContainer && hudContainer.visible) layoutHud();
         }
         // 播放 Ciallo 提示音
         if (stateName === 'attention') {
-          playComplete();
+          playComplete();              // 完成任务 → 欢快提示音
+        } else if (stateName === 'error') {
+          playNotification();          // 报错 → 警告提示音
         } else if (stateName === 'notification') {
-          playCialloChime();
+          playCialloChime();           // 等待操作 → 轻柔提示音
         }
       }
     });
@@ -702,8 +706,8 @@ function updateHudExpression() {
     '03_GaoGuang': '高光',
     '04_LiuHan': '流汗',
     '05_LianHong': '脸红',
-    '06_KuMei': '哭眉',
-    '07_HengYan': '横眼',
+    '06_KuMei': '伤心',
+    '07_HengYan': '厌恶',
     '08_qYan': 'Q眼',
   };
   const displayName = names[currentExpressionName] || currentExpressionName;

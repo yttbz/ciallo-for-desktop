@@ -25,6 +25,7 @@
 
 /** All valid session states ordered by display priority (highest first). */
 const STATE_PRIORITY = Object.freeze([
+  'error',
   'notification',
   'attention',
   'working',
@@ -48,13 +49,16 @@ const EVENT_TO_STATE = {
   UserPromptSubmit:   'working',
   PreToolUse:         'thinking',
   PostToolUse:        null,           // context-dependent; caller should set state explicitly
-  PostToolUseFailure: null,           // context-dependent
-  Stop:               'idle',
+  PostToolUseFailure: 'error',        // tool execution error
+  Stop:               'attention',    // task completed → attention/celebration
+  StopFailure:        'error',        // stop with error
+  ApiError:           'error',        // API error
   SessionEnd:         null,           // triggers deletion, not a state transition
   SubagentStart:      'juggling',
   SubagentStop:       null,           // context-dependent; caller decides the return state
   PermissionRequest:  'attention',
   Notification:       'notification',
+  Elicitation:        'notification',
 };
 
 /** Maximum number of recent events retained per session. */
@@ -139,6 +143,8 @@ function createDefaultSession(id) {
     // ── Internal bookkeeping (not part of the public data model) ──
     /** @private Number of active background (subagent) tasks */
     _backgroundTasks: 0,
+    /** @private Previous state, for change detection */
+    _prevState: 'idle',
   };
 }
 
@@ -214,6 +220,11 @@ function resolvePetDisplayState(sessions) {
 
   if (iterable.length === 0) return 'sleeping';
 
+  // Check for error state first (highest priority)
+  for (const s of iterable) {
+    if (s && s.state === 'error') return 'error';
+  }
+
   for (const state of STATE_PRIORITY) {
     for (const s of iterable) {
       if (s && s.state === state) return state;
@@ -238,12 +249,18 @@ function resolvePetDisplayState(sessions) {
  *   - getAllSessions()
  *   - getSession(sessionId)
  */
-function createStateManager() {
+function createStateManager(opts) {
   /** @type {Map<string, object>} */
   const sessions = new Map();
 
   /** @type {string[]} Insertion-order array. */
   const orderedIds = [];
+
+  /** Optional state-change callback */
+  var _onChange = (opts && typeof opts.onStateChange === 'function') ? opts.onStateChange : null;
+  var _log = (opts && typeof opts.log === 'function') ? opts.log : null;
+  var _staleTimer = null;
+  var _STALE_INTERVAL = 10000; // 10 seconds
 
   // ─── Internal helpers ────────────────────────────────────────────────
 
@@ -272,6 +289,26 @@ function createStateManager() {
     sessions.delete(id);
     const idx = orderedIds.indexOf(id);
     if (idx !== -1) orderedIds.splice(idx, 1);
+  }
+
+  /**
+   * Notify the onStateChange callback with the current highest-priority state.
+   * Called after every updateSession that changes state.
+   */
+  function notifyStateChange() {
+    if (!_onChange) return;
+    var state = resolvePetDisplayState(getSnapshot().sessions);
+    _onChange(state);
+  }
+
+  /**
+   * Check if `error` state is present among sessions.
+   */
+  function hasErrorState() {
+    for (var [, s] of sessions) {
+      if (s.state === 'error') return true;
+    }
+    return false;
   }
 
   // ─── Public API ──────────────────────────────────────────────────────
@@ -422,6 +459,15 @@ function createStateManager() {
 
     // ── Update badge ───────────────────────────────────────────────────
     session.badge = deriveBadge(session);
+
+    // ── Record previous state for notification ─────────────────────────
+    var prevState = session._prevState;
+    session._prevState = session.state;
+
+    // ── Notify on state change ─────────────────────────────────────────
+    if (_onChange && session.state !== prevState) {
+      notifyStateChange();
+    }
 
     // ── Apply optional field overrides ─────────────────────────────────
     if (opts && typeof opts === 'object') {
@@ -575,6 +621,26 @@ function createStateManager() {
     cleanStaleSessions,
     getAllSessions,
     getSession,
+    hasErrorState,
+    startStaleCleanup: function () {
+      if (_staleTimer) return;
+      if (_log) _log('[State] Starting stale session cleanup (10s interval)');
+      _staleTimer = setInterval(function () {
+        var stale = cleanStaleSessions();
+        if (stale.length > 0 && _log) {
+          _log('[State] Cleaned ' + stale.length + ' stale session(s): ' + stale.join(', '));
+        }
+        if (stale.length > 0 && _onChange) {
+          notifyStateChange();
+        }
+      }, _STALE_INTERVAL);
+    },
+    stopStaleCleanup: function () {
+      if (_staleTimer) {
+        clearInterval(_staleTimer);
+        _staleTimer = null;
+      }
+    },
   };
 }
 

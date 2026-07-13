@@ -54,4 +54,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('pet:state-changed', handler);
     return () => ipcRenderer.removeListener('pet:state-changed', handler);
   },
+
+  // Hook 安装管理
+  installHooks: () => ipcRenderer.invoke('hook:install'),
+  uninstallHooks: () => ipcRenderer.invoke('hook:uninstall'),
+  checkHooks: () => ipcRenderer.invoke('hook:check'),
+
+  // Autopilot
+  setAutopilot: (enabled) => ipcRenderer.invoke('autopilot:set', enabled),
+  getAutopilot: () => ipcRenderer.invoke('autopilot:get'),
 });

@@ -58,6 +58,15 @@ function getDefaults() {
     // SSH 远程连接
     enableSshRemote: false,          // 启用 SSH 远程
     sshProfiles: [],                 // SSH 连接配置 [{id, name, host, port, user, keyPath}]
+
+    // 会话 HUD
+    sessionHudEnabled: true,         // 启用会话 HUD
+
+    // Hook 管理
+    hooksInstalled: false,           // Claude Code hook 是否已安装
+
+    // Autopilot (自动批准所有权限请求)
+    autoApproveAllPermissions: false, // ⚠️ 危险！自动批准所有权限
   };
 }
 
@@ -178,6 +187,21 @@ function validate(raw) {
       keyPath: p.keyPath || '',
       autoReconnect: !!p.autoReconnect,
     }));
+  }
+
+  // 会话 HUD
+  if (typeof raw.sessionHudEnabled === 'boolean') {
+    result.sessionHudEnabled = raw.sessionHudEnabled;
+  }
+
+  // Hook 管理
+  if (typeof raw.hooksInstalled === 'boolean') {
+    result.hooksInstalled = raw.hooksInstalled;
+  }
+
+  // Autopilot (自动批准)
+  if (typeof raw.autoApproveAllPermissions === 'boolean') {
+    result.autoApproveAllPermissions = raw.autoApproveAllPermissions;
   }
 
   result.version = SETTINGS_VERSION;

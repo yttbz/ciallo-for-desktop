@@ -27,6 +27,9 @@ const { initDashboard } = require('./dashboard');
 const { createPermissionManager } = require('./permission');
 const { createRemoteSshRuntime } = require('./remote-ssh-runtime');
 const { registerRemoteSshIpc } = require('./remote-ssh-ipc');
+const { deployHooks, checkRemoteClaude, checkRemoteClaudeRunning } = require('./remote-ssh-deploy');
+const hookInstall = require('./hook-install');
+const { writeRuntimeConfig, clearRuntimeConfig } = require('../hooks/server-config');
 
 // ======== 全局状态 ========
 let mainWindow = null;
@@ -543,6 +546,45 @@ function updateTrayMenu() {
     },
     { type: 'separator' },
     {
+      label: '🤖 Autopilot',
+      type: 'checkbox',
+      checked: currentSettings ? !!currentSettings.autoApproveAllPermissions : false,
+      click: (menuItem) => {
+        if (!currentSettings) return;
+        if (menuItem.checked) {
+          dialog.showMessageBox(mainWindow, {
+            type: 'warning',
+            buttons: ['启用', '取消'],
+            defaultId: 1,
+            title: '⚠️ 开启 Autopilot',
+            message: '开启 Autopilot 后将自动批准所有权限请求',
+            detail: '包括运行 Shell 命令和删除文件等操作。\n请确保你完全信任你的 Agent！',
+          }).then((result) => {
+            if (result.response === 0) {
+              currentSettings.autoApproveAllPermissions = true;
+              saveSettings(currentSettings);
+            } else {
+              menuItem.checked = false;
+            }
+          });
+        } else {
+          currentSettings.autoApproveAllPermissions = false;
+          saveSettings(currentSettings);
+        }
+      },
+    },
+    { type: 'separator' },
+    {
+      label: '🔌 安装 Claude Code Hook',
+      click: async () => {
+        const result = hookInstall.installHooks({ app });
+        if (result.success && currentSettings) {
+          currentSettings.hooksInstalled = true;
+          saveSettings(currentSettings);
+        }
+      },
+    },
+    {
       label: '大小',
       submenu: sizeSubmenu,
     },
@@ -618,6 +660,45 @@ function buildAndPopupContextMenu() {
       },
     },
     { type: 'separator' },
+    {
+      label: '🤖 Autopilot',
+      type: 'checkbox',
+      checked: currentSettings ? !!currentSettings.autoApproveAllPermissions : false,
+      click: (menuItem) => {
+        if (!currentSettings) return;
+        if (menuItem.checked) {
+          dialog.showMessageBox(mainWindow, {
+            type: 'warning',
+            buttons: ['启用', '取消'],
+            defaultId: 1,
+            title: '⚠️ 开启 Autopilot',
+            message: '开启 Autopilot 后将自动批准所有权限请求',
+            detail: '包括运行 Shell 命令和删除文件等操作。\n请确保你完全信任你的 Agent！',
+          }).then((result) => {
+            if (result.response === 0) {
+              currentSettings.autoApproveAllPermissions = true;
+              saveSettings(currentSettings);
+            } else {
+              menuItem.checked = false;
+            }
+          });
+        } else {
+          currentSettings.autoApproveAllPermissions = false;
+          saveSettings(currentSettings);
+        }
+      },
+    },
+    { type: 'separator' },
+    {
+      label: '🔌 安装 Claude Code Hook',
+      click: async () => {
+        const result = hookInstall.installHooks({ app });
+        if (result.success && currentSettings) {
+          currentSettings.hooksInstalled = true;
+          saveSettings(currentSettings);
+        }
+      },
+    },
     {
       label: '大小',
       submenu: sizeSubmenu,
@@ -870,6 +951,83 @@ ipcMain.handle('ssh:delete-profile', (event, profileId) => {
   return { success: true };
 });
 
+// ======== Hook 安装 IPC ========
+
+ipcMain.handle('hook:install', () => {
+  const result = hookInstall.installHooks({ app, silent: false });
+  if (result.success && currentSettings) {
+    currentSettings.hooksInstalled = true;
+    saveSettings(currentSettings);
+  }
+  return result;
+});
+
+ipcMain.handle('hook:uninstall', () => {
+  const result = hookInstall.uninstallHooks({ silent: false });
+  if (result.success && currentSettings) {
+    currentSettings.hooksInstalled = false;
+    saveSettings(currentSettings);
+  }
+  return result;
+});
+
+ipcMain.handle('hook:check', () => {
+  return hookInstall.checkHooksInstalled();
+});
+
+// ======== Autopilot IPC ========
+
+ipcMain.handle('autopilot:set', (event, enabled) => {
+  if (!currentSettings) return { success: false };
+  currentSettings.autoApproveAllPermissions = !!enabled;
+  saveSettings(currentSettings);
+  return { success: true };
+});
+
+ipcMain.handle('autopilot:get', () => {
+  return currentSettings ? !!currentSettings.autoApproveAllPermissions : false;
+});
+
+// ======== 远程 Hook 部署 IPC ========
+
+ipcMain.handle('remote:deploy-hooks', async (event, profileId) => {
+  var profile = getSshProfile(profileId);
+  if (!profile) return { success: false, message: 'Profile not found' };
+
+  var localPort = 18789;
+  if (hookServer && typeof hookServer.getPort === 'function') {
+    localPort = hookServer.getPort();
+  }
+
+  // SSH 连接存储
+  var connStore = new Map();
+
+  var result = await deployHooks(profile, {
+    localPort: localPort,
+    onProgress: function (progress) {
+      // 发送进度到渲染进程
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('remote:deploy-progress', progress);
+      }
+    },
+    _connectionStore: connStore,
+  });
+
+  return result;
+});
+
+ipcMain.handle('remote:check-claude', async (event, profileId) => {
+  var profile = getSshProfile(profileId);
+  if (!profile) return { installed: false, version: null };
+  return await checkRemoteClaude(profile);
+});
+
+ipcMain.handle('remote:check-claude-running', async (event, profileId) => {
+  var profile = getSshProfile(profileId);
+  if (!profile) return { running: false, sessions: 0 };
+  return await checkRemoteClaudeRunning(profile);
+});
+
 // ======== 应用生命周期 ========
 
 app.whenReady().then(async () => {
@@ -905,10 +1063,11 @@ app.whenReady().then(async () => {
     log: (msg) => console.log('[Dashboard]', msg),
   });
 
-  // 初始化权限管理器
+  // 初始化权限管理器 (支持 autopilot)
   permissionManager = createPermissionManager({
     getMainWindow: () => mainWindow,
     getSettings: () => currentSettings,
+    isAutoApproveAll: () => currentSettings ? !!currentSettings.autoApproveAllPermissions : false,
     log: (msg) => console.log('[Permission]', msg),
   });
 
@@ -927,20 +1086,47 @@ app.whenReady().then(async () => {
   hookServer = createHookServer({
     log: (msg) => console.log(msg),
     onStateEvent: async (event) => {
-      stateManager.updateSession(
-        event.session_id,
-        event.state,
-        event.event,
-        event
-      );
+      // 兼容 hook 脚本格式 (agent_id, session_id, state, event)
+      var sessionId = event.session_id || event.sessionId || event.data && (event.data.session_id || event.data.sessionId) || 'default';
+      var state = event.state || null;
+      var eventType = event.event || event.type || null;
+      var opts = {};
+
+      if (event.agentId) opts.agentId = event.agentId;
+      if (event.agent_id) opts.agentId = event.agent_id;
+      if (event.sessionTitle || event.session_title) opts.sessionTitle = event.sessionTitle || event.session_title;
+      if (event.cwd) opts.cwd = event.cwd;
+      if (event.sourcePid || event.source_pid) opts.sourcePid = event.sourcePid || event.source_pid;
+      if (event.contextUsage || event.context_usage) opts.contextUsage = event.contextUsage || event.context_usage;
+
+      stateManager.updateSession(sessionId, state, eventType, opts);
+
+      // 权限请求推送 autopilot
+      if (eventType === 'PermissionRequest' && permissionManager) {
+        var autoApprove = currentSettings ? !!currentSettings.autoApproveAllPermissions : false;
+        if (!autoApprove) {
+          permissionManager.createPermission(
+            opts.agentId || 'claude-code',
+            '',
+            event.command || '',
+            event.description || ''
+          );
+        }
+      }
+
       broadcastSessionSnapshot();
     },
     onPermissionRequest: async (req) => {
-      console.log('[Server] Permission request:', req.action);
+      console.log('[Server] Permission request:', req.action || req.command || '(unknown)');
+      // Autopilot check
+      if (currentSettings && currentSettings.autoApproveAllPermissions) {
+        console.log('[Autopilot] Auto-approved:', req.command);
+        return; // Don't show bubble
+      }
       if (permissionManager) {
         permissionManager.createPermission(
-          req.agent_id || 'claude-code',
-          req.action,
+          req.agent_id || req.agentId || 'claude-code',
+          req.action || '',
           req.command || '',
           req.description || ''
         );
@@ -950,7 +1136,16 @@ app.whenReady().then(async () => {
 
   try {
     const port = await hookServer.start();
-    console.log(`[Main] Hook server running on port ${port}`);
+    console.log('[Main] Hook server running on port ' + port);
+
+    // 写入 runtime config 供 hook 脚本发现
+    writeRuntimeConfig(port);
+
+    // 检测之前的 hook 安装状态
+    if (currentSettings && currentSettings.hooksInstalled) {
+      var hookStatus = hookInstall.checkHooksInstalled();
+      console.log('[Main] Hooks: ' + (hookStatus.installed ? 'installed (' + hookStatus.count + ' events)' : 'not installed (re-install needed)'));
+    }
   } catch (err) {
     console.error('[Main] Failed to start hook server:', err.message);
   }

@@ -115,16 +115,29 @@ function validateStateEvent(body) {
 
   var event = {};
 
-  // type :: required
-  if (!body.type || typeof body.type !== 'string') {
-    errors.push('Missing or invalid required field: type (string)');
-  } else if (body.type.length > 64) {
-    errors.push('Field type exceeds maximum length of 64 characters');
+  // type :: required (compatible with hook script: event + state)
+  if (body.type && typeof body.type === 'string') {
+    if (body.type.length > 64) {
+      errors.push('Field type exceeds maximum length of 64 characters');
+    } else {
+      event.type = body.type;
+    }
+  } else if (body.event && typeof body.event === 'string') {
+    // Hook script format: { event: "PostToolUseFailure", state: "error" }
+    event.type = body.event;
+  } else if (body.state && typeof body.state === 'string') {
+    // Minimal format: just a state update
+    event.type = 'StateUpdate';
   } else {
-    event.type = body.type;
+    errors.push('Missing or invalid required field: type or event (string)');
   }
 
-  // agent_id :: optional safe identifier
+  // state :: optional (used by hook scripts)
+  if (body.state && typeof body.state === 'string') {
+    event.state = body.state;
+  }
+
+  // agent_id :: optional safe identifier (hook scripts send agent_id)
   if (body.agent_id !== undefined) {
     if (typeof body.agent_id !== 'string') {
       errors.push('Invalid field: agent_id must be a string');
@@ -134,6 +147,32 @@ function validateStateEvent(body) {
       errors.push('Invalid field: agent_id contains disallowed characters');
     } else {
       event.agentId = body.agent_id;
+      event.agent_id = body.agent_id;
+    }
+  }
+
+  // session_id :: optional string (hook script field)
+  if (body.session_id !== undefined && body.session_id !== null) {
+    if (typeof body.session_id === 'string') {
+      event.session_id = sanitize(body.session_id).slice(0, MAX_ID_LENGTH);
+    }
+  }
+
+  // session_title :: optional string
+  if (body.session_title !== undefined && body.session_title !== null) {
+    if (typeof body.session_title === 'string') {
+      event.sessionTitle = sanitize(body.session_title).slice(0, MAX_STRING_LENGTH);
+    }
+  }
+
+  // context_usage :: optional object
+  if (body.context_usage !== undefined && body.context_usage !== null) {
+    if (typeof body.context_usage === 'object' && !Array.isArray(body.context_usage)) {
+      event.contextUsage = {
+        used: Number.isFinite(body.context_usage.used) ? body.context_usage.used : 0,
+        limit: Number.isFinite(body.context_usage.limit) ? body.context_usage.limit : 0,
+        percent: Number.isFinite(body.context_usage.percent) ? body.context_usage.percent : 0,
+      };
     }
   }
 
@@ -187,6 +226,14 @@ function validateStateEvent(body) {
       event.data = sanitizeData(body.data, 0);
     }
   }
+
+  // Add raw body fields that our handler needs
+  event.state = event.state || body.state || null;
+  event.session_id = event.session_id || body.session_id || null;
+  event.sessionTitle = event.sessionTitle || body.session_title || null;
+  event.contextUsage = event.contextUsage || body.context_usage || null;
+  event.agent_id = event.agent_id || body.agent_id || null;
+  event.cwd = event.cwd || body.cwd || null;
 
   return { valid: errors.length === 0, event: event, errors: errors };
 }
@@ -251,6 +298,13 @@ function validatePermissionRequest(body) {
       errors.push('Field cwd exceeds maximum length of 1024 characters');
     } else {
       req.cwd = sanitize(body.cwd);
+    }
+  }
+
+  // cwd :: optional string (hook scripts send working directory)
+  if (body.cwd !== undefined && body.cwd !== null) {
+    if (typeof body.cwd === 'string') {
+      event.cwd = sanitize(body.cwd).slice(0, 1024);
     }
   }
 
@@ -419,6 +473,13 @@ function createHookServer(ctx) {
       event.identity = identity;
       event.ts = event.timestamp || Date.now();
 
+      // Forward raw body extras that our validator already captured
+      if (validation.event.session_id) event.session_id = validation.event.session_id;
+      if (validation.event.sessionTitle) event.sessionTitle = validation.event.sessionTitle;
+      if (validation.event.contextUsage) event.contextUsage = validation.event.contextUsage;
+      if (validation.event.agent_id) event.agent_id = validation.event.agent_id;
+      if (validation.event.state) event.state = validation.event.state;
+
       try {
         ctx.onStateEvent(event);
         respondJSON(res, 200, { ok: true });
@@ -545,6 +606,16 @@ function createHookServer(ctx) {
   // ── Public API ──────────────────────────────
 
   function start(done) {
+    // Support both callback and Promise styles
+    if (!done && typeof Promise !== 'undefined') {
+      return new Promise(function (resolve, reject) {
+        start(function (err, port) {
+          if (err) reject(err);
+          else resolve(port);
+        });
+      });
+    }
+
     if (server) {
       var alreadyErr = new Error('Hook server is already running on port ' + activePort);
       if (typeof done === 'function') {
