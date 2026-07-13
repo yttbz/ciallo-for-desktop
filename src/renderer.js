@@ -463,6 +463,43 @@ function initSettingsListener() {
   }
 }
 
+// ======== 宠物状态映射（从 clawd-on-desk 状态机接收） ========
+
+/**
+ * 状态机状态 → Live2D 表情映射表
+ */
+const STATE_TO_EXPRESSION = {
+  'idle':         '01_LianHei',    // 默认表情
+  'working':      '02_LianHei2',   // 工作/忙碌
+  'thinking':     '03_GaoGuang',   // 思考中
+  'attention':    '05_LianHong',   // 完成时脸红
+  'notification': '04_LiuHan',     // 需要用户操作(流汗)
+  'sleeping':     '01_LianHei',    // 空闲休眠
+  'juggling':     '06_KuMei',      // 多任务处理
+  'yawning':      '07_HengYan',    // 要打哈欠了
+};
+
+function initPetStateListener() {
+  if (window.electronAPI && window.electronAPI.onPetState) {
+    window.electronAPI.onPetState((stateName) => {
+      const expression = STATE_TO_EXPRESSION[stateName];
+      if (expression && model) {
+        model.expression(expression).catch(() => {});
+        if (hudExpressionText) {
+          const names = {
+            '01_LianHei': '普通', '02_LianHei2': '普通2',
+            '03_GaoGuang': '高光', '04_LiuHan': '流汗',
+            '05_LianHong': '脸红', '06_KuMei': '哭眉',
+            '07_HengYan': '横眼', '08_qYan': 'Q眼',
+          };
+          hudExpressionText.text = `状态: ${names[expression] || expression}`;
+          if (hudContainer && hudContainer.visible) layoutHud();
+        }
+      }
+    });
+  }
+}
+
 // ======== 窗口自适应 ========
 
 function initResizeHandler() {
@@ -898,6 +935,9 @@ async function main() {
 
     // 监听设置变更
     initSettingsListener();
+
+    // 宠物状态监听（来自状态机）
+    initPetStateListener();
 
     // Claude Code 监控
     initClaudeMonitor();

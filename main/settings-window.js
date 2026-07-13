@@ -45,13 +45,19 @@ function createSettingsWindow(parentWindow, windowSettings = {}) {
     settingsWindow = null;
   });
 
-  // 阻止窗口被关闭后还引用
+  // 阻止窗口被关闭后还引用，同时恢复父窗口置顶
   settingsWindow.on('close', () => {
     if (parentWindow && !parentWindow.isDestroyed()) {
       parentWindow.focus();
-      // RE: 某些 Windows 版本在模态对话框关闭后会丢掉父窗口置顶
+      // 某些 Windows 版本在模态对话框关闭后会丢掉父窗口置顶
       if (windowSettings.alwaysOnTop) {
-        parentWindow.setAlwaysOnTop(true);
+        // 使用高级别确保恢复
+        try {
+          parentWindow.setAlwaysOnTop(true, 'screen-saver');
+          parentWindow.setAlwaysOnTop(true, 'normal');
+        } catch (_) {
+          parentWindow.setAlwaysOnTop(true);
+        }
       }
     }
   });

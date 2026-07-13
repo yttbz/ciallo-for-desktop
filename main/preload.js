@@ -47,4 +47,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('claude-code:status', handler);
     return () => ipcRenderer.removeListener('claude-code:status', handler);
   },
+
+  // 宠物状态机
+  onPetState: (cb) => {
+    const handler = (_event, state) => cb(state);
+    ipcRenderer.on('pet:state-changed', handler);
+    return () => ipcRenderer.removeListener('pet:state-changed', handler);
+  },
 });

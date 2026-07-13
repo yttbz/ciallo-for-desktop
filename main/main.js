@@ -19,6 +19,9 @@ const path = require('path');
 const { exec } = require('child_process');
 const settings = require('./settings');
 const { createSettingsWindow, closeSettingsWindow, getSettingsWindow } = require('./settings-window');
+const { createTopmostManager } = require('./topmost');
+const { createHookServer } = require('./server');
+const { createStateManager } = require('./state');
 
 // ======== 全局状态 ========
 let mainWindow = null;
@@ -30,6 +33,9 @@ let isQuitting = false;
 // 设置路径
 const settingsPath = path.join(app.getPath('userData'), 'ciallo-settings.json');
 let currentSettings = null;
+let topmost = null;    // 置顶管理器
+let stateManager = null; // 会话状态机
+let hookServer = null;   // HTTP hook 服务器
 
 // Claude Code 监控状态
 let claudeMonitorTimer = null;
@@ -72,9 +78,18 @@ function saveSettings(snapshot) {
 function applySettingsToWindow(s) {
   if (!mainWindow) return;
 
-  // 置顶
+  // 置顶 (使用高级别确保恢复)
   if (s.alwaysOnTop !== undefined) {
-    mainWindow.setAlwaysOnTop(s.alwaysOnTop);
+    if (s.alwaysOnTop) {
+      try {
+        mainWindow.setAlwaysOnTop(true, 'screen-saver');
+        mainWindow.setAlwaysOnTop(true, 'normal');
+      } catch (_) {
+        mainWindow.setAlwaysOnTop(true);
+      }
+    } else {
+      mainWindow.setAlwaysOnTop(false);
+    }
   }
 
   // 透明度
@@ -377,6 +392,12 @@ function createWindow() {
     },
   });
 
+  // 初始化置顶管理器（必须在 mainWindow 创建后）
+  topmost = createTopmostManager(
+    () => mainWindow,
+    () => currentSettings ? currentSettings.alwaysOnTop : true,
+  );
+
   mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
 
   mainWindow.once('ready-to-show', () => {
@@ -605,8 +626,11 @@ function buildAndPopupContextMenu() {
   // RE: 右键菜单弹出后恢复置顶
   // 某些 Windows 版本/窗口管理器在菜单弹出后会丢掉 alwaysOnTop
   if (currentSettings && currentSettings.alwaysOnTop) {
-    mainWindow.setAlwaysOnTop(true);
+    mainWindow.setAlwaysOnTop(true); // fallback
   }
+
+  // 通过置顶管理器安全恢复
+  if (topmost) topmost.reassert();
 }
 
 // ======== 点击穿透切换 ========
@@ -785,6 +809,11 @@ ipcMain.on('claude-code:refresh', () => {
   checkClaudeStatus();
 });
 
+// 状态机 IPC
+ipcMain.handle('state:get-snapshot', () => {
+  return stateManager ? stateManager.getSnapshot() : { sessions: {}, orderedIds: [], petState: 'idle', sessionCount: 0 };
+});
+
 // SSH 远程 IPC
 ipcMain.handle('ssh:list-statuses', () => {
   return getAllSshStatuses();
@@ -835,8 +864,46 @@ ipcMain.handle('ssh:delete-profile', (event, profileId) => {
 
 // ======== 应用生命周期 ========
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   createWindow();
+  // 启动置顶监控
+  if (topmost) topmost.start();
+
+  // 初始化状态机和 Hook 服务器
+  stateManager = createStateManager({
+    log: (msg) => console.log(msg),
+    onStateChange: (state) => {
+      // 状态变化时通知渲染进程
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('pet:state-changed', state);
+      }
+    },
+  });
+  stateManager.startStaleCleanup();
+
+  hookServer = createHookServer({
+    log: (msg) => console.log(msg),
+    onStateEvent: async (event) => {
+      stateManager.updateSession(
+        event.session_id,
+        event.state,
+        event.event,
+        event
+      );
+    },
+    onPermissionRequest: async (req) => {
+      console.log('[Server] Permission request:', req.action);
+      // TODO: 权限气泡通知
+    },
+  });
+
+  try {
+    const port = await hookServer.start();
+    console.log(`[Main] Hook server running on port ${port}`);
+  } catch (err) {
+    console.error('[Main] Failed to start hook server:', err.message);
+  }
+
   // 如果 applySettingsToWindow 已经创建了托盘，就不要重复创建
   if (!tray) {
     createTray();
