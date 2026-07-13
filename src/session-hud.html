@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self';">
+  <title>CialloForDesktop HUD</title>
+  <style>
+    /* ── Reset ──────────────────────────────────────────────────── */
+    *, *::before, *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                   "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+      font-size: 12px;
+      line-height: 1.4;
+      color: #e5e7eb;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+      cursor: default;
+    }
+
+    /* ── Container (dark semi-transparent background, rounded) ─── */
+    #session-hud-container {
+      width: 100%;
+      height: 100%;
+      background: rgba(15, 23, 42, 0.85);
+      border-radius: 10px;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      border: 1px solid rgba(148, 163, 184, 0.12);
+    }
+
+    /* ── Header ─────────────────────────────────────────────────── */
+    #header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 36px;
+      padding: 0 10px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.10);
+      flex-shrink: 0;
+    }
+
+    #header-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #94a3b8;
+      letter-spacing: 0.3px;
+    }
+
+    /* Pin button */
+    #pin-button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      border: none;
+      background: transparent;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+      padding: 0;
+    }
+    #pin-button:hover {
+      background: rgba(148, 163, 184, 0.15);
+    }
+    #pin-button.pinned {
+      background: rgba(96, 165, 250, 0.12);
+    }
+    #pin-button svg {
+      display: block;
+      transition: stroke 0.15s ease;
+    }
+    #pin-button:hover svg {
+      stroke: #94a3b8;
+    }
+    #pin-button.pinned svg {
+      stroke: #60a5fa;
+    }
+
+    /* ── Session List ────────────────────────────────────────────── */
+    #session-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 0;
+    }
+
+    /* Hide scrollbar for clean look */
+    #session-list::-webkit-scrollbar {
+      width: 3px;
+    }
+    #session-list::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    #session-list::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.25);
+      border-radius: 2px;
+    }
+
+    /* ── Session Row ─────────────────────────────────────────────── */
+    .session-row {
+      display: flex;
+      align-items: center;
+      padding: 4px 10px;
+      gap: 8px;
+      cursor: pointer;
+      transition: background 0.12s ease;
+      min-height: 32px;
+    }
+    .session-row:hover {
+      background: rgba(148, 163, 184, 0.08);
+    }
+
+    /* Row sections */
+    .row-left {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      width: 12px;
+      justify-content: center;
+    }
+
+    .row-middle {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .row-right {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      padding-left: 4px;
+    }
+
+    /* Title */
+    .row-title {
+      font-size: 11px;
+      font-weight: 500;
+      color: #e2e8f0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.3;
+    }
+
+    /* Meta row (state chip + usage chip) */
+    .row-meta {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    /* ── Status Dot ──────────────────────────────────────────────── */
+    .status-dot {
+      display: block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* ── State Chip ──────────────────────────────────────────────── */
+    .state-chip {
+      display: inline-block;
+      padding: 0 5px;
+      height: 16px;
+      line-height: 16px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    /* ── Usage Chip ──────────────────────────────────────────────── */
+    .usage-chip {
+      display: inline-block;
+      padding: 0 4px;
+      height: 14px;
+      line-height: 14px;
+      border-radius: 3px;
+      font-size: 9px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    /* ── Elapsed Time ────────────────────────────────────────────── */
+    .elapsed-time {
+      font-size: 10px;
+      color: #64748b;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    /* ── Folded Row ──────────────────────────────────────────────── */
+    .folded-row {
+      justify-content: space-between;
+      border-top: 1px solid rgba(148, 163, 184, 0.08);
+      padding-top: 5px;
+      padding-bottom: 5px;
+      min-height: 24px;
+    }
+    .folded-row span {
+      font-size: 11px;
+      color: #64748b;
+    }
+    .folded-icon {
+      font-size: 11px;
+      color: #475569;
+      transition: transform 0.12s ease;
+    }
+    .folded-row:hover .folded-icon {
+      transform: translateX(2px);
+    }
+
+    /* ── Empty State ─────────────────────────────────────────────── */
+    #empty-state {
+      display: none;
+      padding: 16px 10px;
+      text-align: center;
+      font-size: 11px;
+      color: #64748b;
+      font-style: italic;
+    }
+
+    /* ── Animations ──────────────────────────────────────────────── */
+    @keyframes dot-pulse {
+      0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+      50% {
+        opacity: 0.5;
+        transform: scale(0.85);
+      }
+    }
+
+    /* ── Reduced Motion ──────────────────────────────────────────── */
+    @media (prefers-reduced-motion: reduce) {
+      .status-dot.pulse {
+        animation: none !important;
+      }
+      .session-row,
+      #pin-button {
+        transition: none !important;
+      }
+      .folded-icon {
+        transition: none !important;
+      }
+    }
+
+    html.reduced-motion .status-dot.pulse {
+      animation: none !important;
+    }
+    html.reduced-motion .session-row,
+    html.reduced-motion #pin-button {
+      transition: none !important;
+    }
+    html.reduced-motion .folded-icon {
+      transition: none !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="session-hud-container">
+    <!-- Header -->
+    <div id="header">
+      <span id="header-title">&#x1F916; Claude Code</span>
+      <button id="pin-button" title="固定" aria-label="固定 HUD"></button>
+    </div>
+
+    <!-- Session list -->
+    <div id="session-list"></div>
+
+    <!-- Empty state (hidden by default) -->
+    <div id="empty-state">&#x1F4AD; 暂无活跃会话</div>
+  </div>
+
+  <script src="session-hud-renderer.js"></script>
+</body>
+</html>

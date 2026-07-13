@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+  <title>Permission</title>
+  <style>
+    /* =========================================================
+       CSS Variables — Dark & Light themes
+       ========================================================= */
+    :root {
+      /* Dark theme (default) */
+      --bg-primary: #1a1a2e;
+      --bg-secondary: #16213e;
+      --bg-card: #0f3460;
+      --bg-hover: #1a1a4e;
+      --text-primary: #e8e8f0;
+      --text-secondary: #a0a0b8;
+      --text-muted: #6c6c8a;
+      --accent-primary: #e94560;
+      --accent-secondary: #533483;
+      --border-color: #2a2a4a;
+      --shadow-color: rgba(0, 0, 0, 0.4);
+      --success-color: #2ecc71;
+      --warning-color: #f39c12;
+      --danger-color: #e74c3c;
+      --info-color: #3498db;
+      --code-bg: rgba(0, 0, 0, 0.3);
+      --tooltip-bg: #2d2d44;
+    }
+
+    /* Light theme */
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg-primary: #f5f5fa;
+        --bg-secondary: #e8e8f0;
+        --bg-card: #ffffff;
+        --bg-hover: #e0e0f0;
+        --text-primary: #2c2c3e;
+        --text-secondary: #5a5a7a;
+        --text-muted: #9090aa;
+        --accent-primary: #e94560;
+        --accent-secondary: #7c3aed;
+        --border-color: #d0d0e0;
+        --shadow-color: rgba(0, 0, 0, 0.1);
+        --success-color: #27ae60;
+        --warning-color: #e67e22;
+        --danger-color: #c0392b;
+        --info-color: #2980b9;
+        --code-bg: rgba(0, 0, 0, 0.05);
+        --tooltip-bg: #ffffff;
+      }
+    }
+
+    /* =========================================================
+       Reset & Base
+       ========================================================= */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                   "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue",
+                   Helvetica, Arial, sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text-primary);
+      background: var(--bg-primary);
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    /* =========================================================
+       Layout
+       ========================================================= */
+    .bubble-container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      padding: 12px 14px;
+      gap: 8px;
+    }
+
+    /* =========================================================
+       Header (drag handle)
+       ========================================================= */
+    .bubble-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border-color);
+      -webkit-app-region: drag;
+      cursor: grab;
+    }
+
+    .bubble-header:active {
+      cursor: grabbing;
+    }
+
+    .bubble-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .bubble-title .icon {
+      font-size: 14px;
+    }
+
+    .bubble-source {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      background: var(--accent-secondary);
+      color: #fff;
+      font-weight: 500;
+      letter-spacing: 0.3px;
+      -webkit-app-region: no-drag;
+    }
+
+    /* =========================================================
+       Body
+       ========================================================= */
+    .bubble-body {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* Scrollbar styling */
+    .bubble-body::-webkit-scrollbar {
+      width: 4px;
+    }
+    .bubble-body::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .bubble-body::-webkit-scrollbar-thumb {
+      background: var(--border-color);
+      border-radius: 2px;
+    }
+
+    /* =========================================================
+       Tool info
+       ========================================================= */
+    .tool-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tool-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--accent-primary);
+      color: #fff;
+    }
+
+    .agent-label {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .agent-label strong {
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    /* =========================================================
+       Command display
+       ========================================================= */
+    .command-block {
+      background: var(--code-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-family: "SF Mono", "Monaco", "Inconsolata", "Fira Code",
+                   "Droid Sans Mono", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--text-primary);
+      word-break: break-all;
+      max-height: 120px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      position: relative;
+    }
+
+    .command-block::-webkit-scrollbar {
+      width: 3px;
+    }
+    .command-block::-webkit-scrollbar-thumb {
+      background: var(--border-color);
+      border-radius: 2px;
+    }
+
+    .command-block .cmd-prompt {
+      color: var(--success-color);
+      opacity: 0.7;
+    }
+
+    .command-block .cmd-text {
+      color: var(--text-primary);
+    }
+
+    /* =========================================================
+       Metadata row
+       ========================================================= */
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 12px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .meta-row .meta-item {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .meta-row .meta-item .label {
+      color: var(--text-secondary);
+    }
+
+    /* =========================================================
+       Action buttons
+       ========================================================= */
+    .bubble-actions {
+      display: flex;
+      gap: 6px;
+      padding-top: 6px;
+      border-top: 1px solid var(--border-color);
+    }
+
+    .bubble-actions button {
+      flex: 1;
+      padding: 7px 12px;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      outline: none;
+      -webkit-app-region: no-drag;
+    }
+
+    .bubble-actions button:active {
+      transform: scale(0.97);
+    }
+
+    .btn-allow {
+      background: var(--success-color);
+      color: #fff;
+      border-color: var(--success-color);
+    }
+
+    .btn-allow:hover {
+      filter: brightness(1.1);
+      box-shadow: 0 0 12px rgba(46, 204, 113, 0.3);
+    }
+
+    .btn-always-allow {
+      background: transparent;
+      color: var(--info-color);
+      border-color: var(--info-color);
+    }
+
+    .btn-always-allow:hover {
+      background: rgba(52, 152, 219, 0.1);
+    }
+
+    .btn-deny {
+      background: transparent;
+      color: var(--danger-color);
+      border-color: var(--danger-color);
+    }
+
+    .btn-deny:hover {
+      background: rgba(231, 76, 60, 0.1);
+    }
+
+    /* =========================================================
+       Auto-deny countdown
+       ========================================================= */
+    .countdown-bar {
+      height: 2px;
+      background: var(--border-color);
+      border-radius: 1px;
+      overflow: hidden;
+      margin-top: 2px;
+    }
+
+    .countdown-bar .fill {
+      height: 100%;
+      background: var(--accent-primary);
+      border-radius: 1px;
+      transition: width 1s linear;
+      width: 100%;
+    }
+
+    .countdown-text {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-align: right;
+    }
+
+    /* =========================================================
+       Empty / error states
+       ========================================================= */
+    .state-empty,
+    .state-error {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      color: var(--text-muted);
+      font-size: 13px;
+      gap: 8px;
+    }
+
+    .state-empty .icon,
+    .state-error .icon {
+      font-size: 32px;
+      opacity: 0.5;
+    }
+
+    .state-error {
+      color: var(--danger-color);
+    }
+
+    /* =========================================================
+       Animations
+       ========================================================= */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(20px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    .bubble-container {
+      animation: fadeIn 0.2s ease-out;
+    }
+
+    .command-block {
+      animation: slideIn 0.25s ease-out;
+    }
+
+    /* =========================================================
+       Truncation utilities
+       ========================================================= */
+    .text-truncate {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* =========================================================
+       Focus / keyboard
+       ========================================================= */
+    button:focus-visible {
+      outline: 2px solid var(--accent-primary);
+      outline-offset: 2px;
+    }
+
+    /* =========================================================
+       Responsive — narrow
+       ========================================================= */
+    @media (max-width: 400px) {
+      .bubble-container {
+        padding: 8px 10px;
+      }
+      .bubble-actions {
+        flex-direction: column;
+      }
+      .command-block {
+        max-height: 80px;
+        font-size: 11px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="bubble-container" id="bubbleContainer">
+    <!-- Header -->
+    <div class="bubble-header">
+      <div class="bubble-title">
+        <span class="icon">&#x1F6E1;</span>
+        <span>Permission Request</span>
+      </div>
+      <span class="bubble-source" id="sourceBadge">claude</span>
+    </div>
+
+    <!-- Body -->
+    <div class="bubble-body" id="bubbleBody">
+      <div class="state-empty" id="emptyState">
+        <div class="icon">&#x23F3;</div>
+        <div>Waiting for permission request...</div>
+      </div>
+
+      <!-- Permission content (hidden by default) -->
+      <div id="permissionContent" style="display: none;">
+        <!-- Tool info -->
+        <div class="tool-info">
+          <span class="tool-badge" id="toolBadge">
+            <span>&#x1F528;</span>
+            <span id="toolName">Bash</span>
+          </span>
+          <span class="agent-label">
+            from <strong id="agentId">agent</strong>
+          </span>
+        </div>
+
+        <!-- Command -->
+        <div class="command-block" id="commandBlock">
+          <span class="cmd-prompt">$ </span>
+          <span class="cmd-text" id="commandText"></span>
+        </div>
+
+        <!-- Metadata -->
+        <div class="meta-row" id="metaRow">
+          <span class="meta-item">
+            <span class="label">cwd:</span>
+            <span id="metaCwd">--</span>
+          </span>
+          <span class="meta-item">
+            <span class="label">time:</span>
+            <span id="metaTime">--</span>
+          </span>
+        </div>
+
+        <!-- Countdown -->
+        <div class="countdown-bar">
+          <div class="fill" id="countdownFill"></div>
+        </div>
+        <div class="countdown-text">
+          Auto-deny in <span id="countdownSec">120</span>s
+        </div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="bubble-actions" id="bubbleActions">
+      <button class="btn-deny" id="btnDeny" disabled>&#x2716; Deny</button>
+      <button class="btn-always-allow" id="btnAlwaysAllow" disabled>&#x2714; Always Allow</button>
+      <button class="btn-allow" id="btnAllow" disabled>&#x2714; Allow</button>
+    </div>
+  </div>
+
+  <!-- Renderer script -->
+  <script src="bubble-renderer.js"></script>
+</body>
+</html>

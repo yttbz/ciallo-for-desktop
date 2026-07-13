@@ -48,9 +48,13 @@ function renderContent(tabId) {
   switch (tabId) {
     case 'window': renderWindow(content); break;
     case 'size': renderSize(content); break;
+    case 'general': renderGeneral(content); break;
     case 'hud': renderHud(content); break;
+    case 'sessionHud': renderSessionHud(content); break;
     case 'claude': renderClaude(content); break;
     case 'ssh': renderSsh(content); break;
+    case 'agents': renderAgents(content); break;
+    case 'shortcuts': renderShortcuts(content); break;
     case 'tray': renderTray(content); break;
     case 'about': renderAbout(content); break;
   }
@@ -123,6 +127,212 @@ function setupOpacitySlider() {
       if (!res.success) showToast('保存失败', true);
     });
   });
+}
+
+// ---- ⚙️ 通用 ----
+
+function renderGeneral(container) {
+  container.innerHTML = `
+    <div class="tab-page">
+      <div class="tab-title">⚙️ 通用设置</div>
+      <div class="tab-subtitle">应用基本行为和外观设置</div>
+
+      <div class="section">
+        <div class="section-title">语言</div>
+        <div class="row">
+          <div class="row-info">
+            <div class="row-label">界面语言</div>
+            <div class="row-desc">设置界面显示语言</div>
+          </div>
+          <select class="dropdown" id="langSelect">
+            <option value="zh-CN" ${currentSettings.language === 'zh-CN' ? 'selected' : ''}>中文</option>
+            <option value="en" ${currentSettings.language === 'en' ? 'selected' : ''}>English</option>
+            <option value="ja" ${currentSettings.language === 'ja' ? 'selected' : ''}>日本語</option>
+            <option value="ko" ${currentSettings.language === 'ko' ? 'selected' : ''}>한국어</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">行为</div>
+        <div class="row">
+          <div class="row-info">
+            <div class="row-label">开机自启</div>
+            <div class="row-desc">系统启动时自动运行</div>
+          </div>
+          <button class="switch ${currentSettings.autoStart ? 'on' : ''}" data-key="autoStart"></button>
+        </div>
+        <div class="row">
+          <div class="row-info">
+            <div class="row-label">允许拖拽</div>
+            <div class="row-desc">允许鼠标拖拽移动窗口</div>
+          </div>
+          <button class="switch ${currentSettings.dragEnabled !== false ? 'on' : ''}" data-key="dragEnabled"></button>
+        </div>
+        <div class="row">
+          <div class="row-info">
+            <div class="row-label">点击反应</div>
+            <div class="row-desc">点击模型时切换表情</div>
+          </div>
+          <button class="switch ${currentSettings.clickReaction !== false ? 'on' : ''}" data-key="clickReaction"></button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">通知</div>
+        <div class="row">
+          <div class="row-info">
+            <div class="row-label">Ciallo 提示音</div>
+            <div class="row-desc">Claude Code 完成/通知时播放提示音</div>
+          </div>
+          <button class="switch on" id="soundToggle">开</button>
+        </div>
+      </div>
+    </div>
+  `;
+  setupSwitches(container);
+  setupLangSelect();
+}
+
+function setupLangSelect() {
+  const sel = document.getElementById('langSelect');
+  if (sel) {
+    sel.addEventListener('change', () => {
+      window.settingsAPI.update('language', sel.value).then(r => {
+        if (!r.success) showToast('保存失败', true);
+      });
+    });
+  }
+}
+
+// ---- 🖥️ 会话 HUD ----
+
+function renderSessionHud(container) {
+  container.innerHTML = `
+    <div class="tab-page">
+      <div class="tab-title">🖥️ 会话 HUD</div>
+      <div class="tab-subtitle">Claude Code 会话悬浮窗显示设置</div>
+
+      <div class="section">
+        <div class="row">
+          <div class="row-info">
+            <div class="row-label">启用会话 HUD</div>
+            <div class="row-desc">在宠物旁显示会话状态悬浮窗</div>
+          </div>
+          <button class="switch ${currentSettings.sessionHudEnabled ? 'on' : ''}" data-key="sessionHudEnabled"></button>
+        </div>
+        <div class="row">
+          <div class="row-info">
+            <div class="row-label">固定显示</div>
+            <div class="row-desc">HUD 始终可见，不自动隐藏</div>
+          </div>
+          <button class="switch ${currentSettings.sessionHudPinned ? 'on' : ''}" data-key="sessionHudPinned"></button>
+        </div>
+        <div class="row">
+          <div class="row-info">
+            <div class="row-label">显示状态标签</div>
+            <div class="row-desc">在会话行上显示 Thinking/Working 等标签</div>
+          </div>
+          <button class="switch ${currentSettings.sessionHudShowLabels !== false ? 'on' : ''}" data-key="sessionHudShowLabels"></button>
+        </div>
+      </div>
+    </div>
+  `;
+  setupSwitches(container);
+}
+
+// ---- 👤 Agent 管理 ----
+
+function renderAgents(container) {
+  container.innerHTML = `
+    <div class="tab-page">
+      <div class="tab-title">👤 Agent 管理</div>
+      <div class="tab-subtitle">管理和检测已安装的 AI 编码助手</div>
+
+      <div class="section">
+        <div class="row">
+          <div class="row-info">
+            <div class="row-label">自动检测 Agent</div>
+            <div class="row-desc">检测系统中安装的 AI 编码助手并显示在此处</div>
+          </div>
+          <button class="switch ${currentSettings.agentDetectionEnabled !== false ? 'on' : ''}" data-key="agentDetectionEnabled"></button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">已检测的 Agent</div>
+        <div id="agentList" style="padding:14px;text-align:center;color:var(--text-muted);font-size:13px;">
+          加载中...
+        </div>
+      </div>
+    </div>
+  `;
+  setupSwitches(container);
+  loadAgentList();
+}
+
+async function loadAgentList() {
+  const list = document.getElementById('agentList');
+  if (!list) return;
+  // 简单显示已知 Agent
+  const knownAgents = [
+    { id: 'claude-code', name: 'Claude Code', icon: '🤖' },
+    { id: 'codex', name: 'Codex CLI', icon: '📝' },
+    { id: 'gemini-cli', name: 'Gemini CLI', icon: '✨' },
+    { id: 'copilot-cli', name: 'GitHub Copilot', icon: '🎯' },
+  ];
+  list.innerHTML = knownAgents.map(a => `
+    <div class="row" style="margin-bottom:4px;">
+      <div class="row-info">
+        <div class="row-label">${a.icon} ${a.name}</div>
+        <div class="row-desc">${a.id}</div>
+      </div>
+      <span style="font-size:12px;padding:2px 8px;border-radius:4px;background:#e8f5e9;color:#4caf50;">已支持</span>
+    </div>
+  `).join('');
+}
+
+// ---- ⌨️ 快捷键 ----
+
+function renderShortcuts(container) {
+  container.innerHTML = `
+    <div class="tab-page">
+      <div class="tab-title">⌨️ 快捷键</div>
+      <div class="tab-subtitle">桌面宠物的键盘快捷键</div>
+
+      <div class="section">
+        <div class="section-title">窗口控制</div>
+        <div class="row">
+          <div class="row-info"><div class="row-label">切换点击穿透</div></div>
+          <span style="font-size:13px;color:var(--pink);font-weight:600;">Ctrl+T</span>
+        </div>
+        <div class="row">
+          <div class="row-info"><div class="row-label">重置表情</div></div>
+          <span style="font-size:13px;color:var(--pink);font-weight:600;">Esc</span>
+        </div>
+        <div class="row">
+          <div class="row-info"><div class="row-label">打开设置</div></div>
+          <span style="font-size:13px;color:var(--pink);font-weight:600;">Ctrl+,</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">表情切换</div>
+        <div class="row">
+          <div class="row-info"><div class="row-label">切换对应表情</div></div>
+          <span style="font-size:13px;color:var(--pink);font-weight:600;">1 - 8</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Claude Code</div>
+        <div class="row">
+          <div class="row-info"><div class="row-label">聚焦终端</div></div>
+          <span style="font-size:13px;color:var(--text-muted);">点击 HUD 会话行</span>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 // ---- 📏 大小 ----

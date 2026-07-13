@@ -22,6 +22,11 @@ const { createSettingsWindow, closeSettingsWindow, getSettingsWindow } = require
 const { createTopmostManager } = require('./topmost');
 const { createHookServer } = require('./server');
 const { createStateManager } = require('./state');
+const { initSessionHud } = require('./session-hud');
+const { initDashboard } = require('./dashboard');
+const { createPermissionManager } = require('./permission');
+const { createRemoteSshRuntime } = require('./remote-ssh-runtime');
+const { registerRemoteSshIpc } = require('./remote-ssh-ipc');
 
 // ======== 全局状态 ========
 let mainWindow = null;
@@ -36,6 +41,10 @@ let currentSettings = null;
 let topmost = null;    // 置顶管理器
 let stateManager = null; // 会话状态机
 let hookServer = null;   // HTTP hook 服务器
+let sessionHud = null;   // 会话 HUD 窗口
+let dashboard = null;    // Dashboard 窗口
+let permissionManager = null; // 权限管理
+let sshRuntime = null;   // SSH 远程连接
 
 // Claude Code 监控状态
 let claudeMonitorTimer = null;
@@ -880,6 +889,41 @@ app.whenReady().then(async () => {
   });
   stateManager.startStaleCleanup();
 
+  // 初始化会话 HUD
+  sessionHud = initSessionHud({
+    getPetWindow: () => mainWindow,
+    getSnapshot: () => stateManager ? stateManager.getSnapshot() : { sessions: {}, orderedIds: [], petState: 'idle', sessionCount: 0 },
+    getI18n: () => ({}),
+    log: (msg) => console.log('[HUD]', msg),
+  });
+
+  // 初始化 Dashboard
+  dashboard = initDashboard({
+    getPetWindow: () => mainWindow,
+    getSnapshot: () => stateManager ? stateManager.getSnapshot() : { sessions: {}, orderedIds: [], petState: 'idle', sessionCount: 0 },
+    getI18n: () => ({}),
+    log: (msg) => console.log('[Dashboard]', msg),
+  });
+
+  // 初始化权限管理器
+  permissionManager = createPermissionManager({
+    getMainWindow: () => mainWindow,
+    getSettings: () => currentSettings,
+    log: (msg) => console.log('[Permission]', msg),
+  });
+
+  // Hook 服务器事件 → 状态机 + 广播
+  function broadcastSessionSnapshot() {
+    if (!stateManager) return;
+    const snapshot = stateManager.getSnapshot();
+    if (sessionHud && currentSettings && currentSettings.sessionHudEnabled) {
+      sessionHud.broadcastSessionSnapshot(snapshot);
+    }
+    if (dashboard) {
+      dashboard.broadcastSnapshot(snapshot);
+    }
+  }
+
   hookServer = createHookServer({
     log: (msg) => console.log(msg),
     onStateEvent: async (event) => {
@@ -889,10 +933,18 @@ app.whenReady().then(async () => {
         event.event,
         event
       );
+      broadcastSessionSnapshot();
     },
     onPermissionRequest: async (req) => {
       console.log('[Server] Permission request:', req.action);
-      // TODO: 权限气泡通知
+      if (permissionManager) {
+        permissionManager.createPermission(
+          req.agent_id || 'claude-code',
+          req.action,
+          req.command || '',
+          req.description || ''
+        );
+      }
     },
   });
 

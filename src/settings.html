@@ -17,15 +17,23 @@
       <div class="sidebar-nav" id="sidebarNav">
         <button class="sidebar-item active" data-tab="window">
           <span class="sidebar-icon">📌</span>
-          <span class="sidebar-label">置顶/窗口</span>
+          <span class="sidebar-label">窗口</span>
         </button>
         <button class="sidebar-item" data-tab="size">
           <span class="sidebar-icon">📏</span>
           <span class="sidebar-label">大小</span>
         </button>
+        <button class="sidebar-item" data-tab="general">
+          <span class="sidebar-icon">⚙️</span>
+          <span class="sidebar-label">通用</span>
+        </button>
         <button class="sidebar-item" data-tab="hud">
           <span class="sidebar-icon">📊</span>
           <span class="sidebar-label">HUD</span>
+        </button>
+        <button class="sidebar-item" data-tab="sessionHud">
+          <span class="sidebar-icon">🖥️</span>
+          <span class="sidebar-label">会话 HUD</span>
         </button>
         <button class="sidebar-item" data-tab="claude">
           <span class="sidebar-icon">🤖</span>
@@ -35,9 +43,17 @@
           <span class="sidebar-icon">🔌</span>
           <span class="sidebar-label">SSH</span>
         </button>
+        <button class="sidebar-item" data-tab="agents">
+          <span class="sidebar-icon">👤</span>
+          <span class="sidebar-label">Agent</span>
+        </button>
+        <button class="sidebar-item" data-tab="shortcuts">
+          <span class="sidebar-icon">⌨️</span>
+          <span class="sidebar-label">快捷键</span>
+        </button>
         <button class="sidebar-item" data-tab="tray">
           <span class="sidebar-icon">🧩</span>
-          <span class="sidebar-label">系统托盘</span>
+          <span class="sidebar-label">托盘</span>
         </button>
         <button class="sidebar-item" data-tab="about">
           <span class="sidebar-icon">💖</span>
@@ -50,7 +66,6 @@
     <main class="content" id="content"></main>
   </div>
 
-  <!-- 设置面板渲染脚本 -->
   <script src="settings-renderer.js"></script>
 </body>
 </html>
