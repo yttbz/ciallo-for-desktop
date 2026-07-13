@@ -29,4 +29,24 @@ contextBridge.exposeInMainWorld('settingsAPI', {
 
   // 获取应用版本号
   getAppVersion: () => ipcRenderer.invoke('app:get-version'),
+
+  // Claude Code 监控
+  getClaudeStatus: () => ipcRenderer.invoke('claude-code:status'),
+  onClaudeStatus: (cb) => {
+    const handler = (_event, status) => cb(status);
+    ipcRenderer.on('claude-code:status', handler);
+    return () => ipcRenderer.removeListener('claude-code:status', handler);
+  },
+
+  // SSH 远程连接管理
+  sshListStatuses: () => ipcRenderer.invoke('ssh:list-statuses'),
+  sshConnect: (profileId) => ipcRenderer.invoke('ssh:connect', profileId),
+  sshDisconnect: (profileId) => ipcRenderer.invoke('ssh:disconnect', profileId),
+  sshSaveProfile: (profile) => ipcRenderer.invoke('ssh:save-profile', profile),
+  sshDeleteProfile: (profileId) => ipcRenderer.invoke('ssh:delete-profile', profileId),
+  onSshStatusChanged: (cb) => {
+    const handler = (_event, status) => cb(status);
+    ipcRenderer.on('ssh:status-changed', handler);
+    return () => ipcRenderer.removeListener('ssh:status-changed', handler);
+  },
 });

@@ -39,4 +39,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // 获取设置值
   getSettings: () => ipcRenderer.invoke('settings:get'),
+
+  // Claude Code 监控
+  getClaudeStatus: () => ipcRenderer.invoke('claude-code:status'),
+  onClaudeStatus: (cb) => {
+    const handler = (_event, status) => cb(status);
+    ipcRenderer.on('claude-code:status', handler);
+    return () => ipcRenderer.removeListener('claude-code:status', handler);
+  },
 });

@@ -50,6 +50,14 @@ function getDefaults() {
     // 托盘
     showTrayIcon: true,
     closeButtonAction: 'minimize-to-tray',  // 'minimize-to-tray' | 'quit'
+
+    // Claude Code 监控
+    enableClaudeMonitor: false,      // 启用 Claude Code 会话监控
+    hudShowClaudeStatus: true,       // HUD 显示 Claude Code 状态
+
+    // SSH 远程连接
+    enableSshRemote: false,          // 启用 SSH 远程
+    sshProfiles: [],                 // SSH 连接配置 [{id, name, host, port, user, keyPath}]
   };
 }
 
@@ -143,6 +151,33 @@ function validate(raw) {
   }
   if (typeof raw.closeButtonAction === 'string' && ['minimize-to-tray', 'quit'].includes(raw.closeButtonAction)) {
     result.closeButtonAction = raw.closeButtonAction;
+  }
+
+  // Claude Code 监控
+  if (typeof raw.enableClaudeMonitor === 'boolean') {
+    result.enableClaudeMonitor = raw.enableClaudeMonitor;
+  }
+  if (typeof raw.hudShowClaudeStatus === 'boolean') {
+    result.hudShowClaudeStatus = raw.hudShowClaudeStatus;
+  }
+
+  // SSH 远程连接
+  if (typeof raw.enableSshRemote === 'boolean') {
+    result.enableSshRemote = raw.enableSshRemote;
+  }
+  if (Array.isArray(raw.sshProfiles)) {
+    // 验证每个 profile 的结构
+    result.sshProfiles = raw.sshProfiles.filter(p =>
+      p && typeof p === 'object' && typeof p.id === 'string' && typeof p.host === 'string'
+    ).map(p => ({
+      id: p.id,
+      name: p.name || p.host,
+      host: p.host,
+      port: typeof p.port === 'number' ? Math.max(1, Math.min(65535, p.port)) : 22,
+      user: p.user || 'root',
+      keyPath: p.keyPath || '',
+      autoReconnect: !!p.autoReconnect,
+    }));
   }
 
   result.version = SETTINGS_VERSION;

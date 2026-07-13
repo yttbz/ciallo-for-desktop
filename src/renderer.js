@@ -33,16 +33,19 @@ let hudBg = null;
 let hudClockText = null;
 let hudExpressionText = null;
 let hudStatusText = null;
+let hudClaudeText = null;     // Claude Code 状态
 let hudGreetingText = null;
 let hudGreetingTimer = null;
 let hudClockInterval = null;
 let currentExpressionName = '01_LianHei';
 let isClickThrough = false;
+let claudeMonitorRunning = false;
 let hudSettings = {
   enableHUD: false,
   hudShowClock: true,
   hudShowExpressionName: true,
   hudShowStatusIndicators: true,
+  hudShowClaudeStatus: true,
   hudShowGreetings: false,
   hudPosition: 'bottom-right',
   hudOpacity: 0.8,
@@ -199,14 +202,19 @@ function adjustWindowSize() {
 
   const bounds = model.getLocalBounds();
   const scale = model.scale.x;
-  // 只留 20px 边缘，让窗口紧贴模型
-  const canvasWidth = Math.ceil(bounds.width * scale + 20);
-  const canvasHeight = Math.ceil(bounds.height * scale + 20);
+  // 留 60px 边缘，避免 Windows 阴影裁剪（原为 20px）
+  const padding = 60;
+  const canvasWidth = Math.ceil(bounds.width * scale + padding);
+  const canvasHeight = Math.ceil(bounds.height * scale + padding);
 
   const width = Math.max(150, Math.min(canvasWidth, 800));
   const height = Math.max(200, Math.min(canvasHeight, 1000));
 
   app.renderer.resize(width, height);
+
+  // 😤 关键修复：resize 后重新居中模型，
+  // 否则模型位置基于旧窗口中心，脚部会被裁剪
+  model.position.set(width / 2, height / 2);
 
   if (window.electronAPI) {
     window.electronAPI.setSize(width, height);
@@ -512,6 +520,18 @@ function initHud() {
   });
   hudStatusText = new PIXI.Text('', statusStyle);
 
+  // Claude Code 状态文本（相同样式，绿色调）
+  hudClaudeText = new PIXI.Text('', new PIXI.TextStyle({
+    fontFamily: 'Microsoft YaHei, PingFang SC, sans-serif',
+    fontSize: 11,
+    fill: '#66ff99',
+    dropShadow: true,
+    dropShadowColor: '#000000',
+    dropShadowBlur: 3,
+    dropShadowDistance: 1,
+  }));
+  hudClaudeText.visible = false;
+
   const greetingStyle = new PIXI.TextStyle({
     fontFamily: 'Microsoft YaHei, PingFang SC, sans-serif',
     fontSize: 14,
@@ -531,6 +551,7 @@ function initHud() {
   hudContainer.addChild(hudClockText);
   hudContainer.addChild(hudExpressionText);
   hudContainer.addChild(hudStatusText);
+  hudContainer.addChild(hudClaudeText);
   hudContainer.addChild(hudGreetingText);
 
   app.stage.addChild(hudContainer);
@@ -570,6 +591,14 @@ function layoutHud() {
     lines.push(hudStatusText);
   } else {
     hudStatusText.visible = false;
+  }
+
+  // Claude Code 状态（设置开启时有数据才显示）
+  if (hudSettings.hudShowClaudeStatus && hudClaudeText && hudClaudeText.text) {
+    hudClaudeText.visible = true;
+    lines.push(hudClaudeText);
+  } else if (hudClaudeText) {
+    hudClaudeText.visible = false;
   }
 
   // 计算面板尺寸
@@ -647,6 +676,46 @@ function updateHudStatus() {
   if (hudContainer && hudContainer.visible) layoutHud();
 }
 
+/**
+ * 更新 HUD 的 Claude Code 状态显示
+ */
+function updateHudClaudeStatus(status) {
+  if (!hudClaudeText) return;
+  if (status && status.running) {
+    hudClaudeText.text = `🤖 Claude: ${status.sessions} 会话`;
+    hudClaudeText.style.fill = '#66ff99'; // 绿色 - 运行中
+  } else if (status) {
+    hudClaudeText.text = '🤖 Claude: 空闲';
+    hudClaudeText.style.fill = '#999999'; // 灰色 - 空闲
+  } else {
+    hudClaudeText.text = '';
+    hudClaudeText.visible = false;
+  }
+  if (hudContainer && hudContainer.visible) layoutHud();
+}
+
+/**
+ * 初始化 Claude Code 状态监听
+ */
+function initClaudeMonitor() {
+  if (window.electronAPI && window.electronAPI.onClaudeStatus) {
+    // 先拉取一次当前状态
+    window.electronAPI.getClaudeStatus().then((status) => {
+      if (status) {
+        claudeMonitorRunning = true;
+        updateHudClaudeStatus(status);
+      }
+    }).catch(() => {});
+    // 监听后续推送
+    window.electronAPI.onClaudeStatus((status) => {
+      if (status) {
+        claudeMonitorRunning = true;
+        updateHudClaudeStatus(status);
+      }
+    });
+  }
+}
+
 function scheduleNextGreeting() {
   if (hudGreetingTimer) clearTimeout(hudGreetingTimer);
   if (!hudSettings.hudShowGreetings) return;
@@ -699,7 +768,8 @@ function applyHudSettings(settings) {
   let changed = false;
   const hudKeys = [
     'enableHUD', 'hudShowClock', 'hudShowExpressionName',
-    'hudShowStatusIndicators', 'hudShowGreetings', 'hudPosition', 'hudOpacity',
+    'hudShowStatusIndicators', 'hudShowClaudeStatus', 'hudShowGreetings',
+    'hudPosition', 'hudOpacity',
   ];
 
   for (const key of hudKeys) {
@@ -828,6 +898,9 @@ async function main() {
 
     // 监听设置变更
     initSettingsListener();
+
+    // Claude Code 监控
+    initClaudeMonitor();
 
     if (window.electronAPI) {
       window.electronAPI.ready();

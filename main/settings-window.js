@@ -49,6 +49,10 @@ function createSettingsWindow(parentWindow, windowSettings = {}) {
   settingsWindow.on('close', () => {
     if (parentWindow && !parentWindow.isDestroyed()) {
       parentWindow.focus();
+      // RE: 某些 Windows 版本在模态对话框关闭后会丢掉父窗口置顶
+      if (windowSettings.alwaysOnTop) {
+        parentWindow.setAlwaysOnTop(true);
+      }
     }
   });
 }

@@ -16,6 +16,7 @@ const {
   shell,
 } = require('electron');
 const path = require('path');
+const { exec } = require('child_process');
 const settings = require('./settings');
 const { createSettingsWindow, closeSettingsWindow, getSettingsWindow } = require('./settings-window');
 
@@ -29,6 +30,10 @@ let isQuitting = false;
 // 设置路径
 const settingsPath = path.join(app.getPath('userData'), 'ciallo-settings.json');
 let currentSettings = null;
+
+// Claude Code 监控状态
+let claudeMonitorTimer = null;
+let lastClaudeStatus = { running: false, sessions: 0, details: [] };
 
 // ======== 单实例锁 ========
 const gotTheLock = app.requestSingleInstanceLock();
@@ -113,6 +118,229 @@ function applySettingsToWindow(s) {
       tray = null;
     }
   }
+
+  // Claude Code 监控
+  if (s.enableClaudeMonitor !== undefined) {
+    if (s.enableClaudeMonitor) {
+      startClaudeMonitor();
+    } else {
+      stopClaudeMonitor();
+    }
+  }
+}
+
+// ======== Claude Code 监控 ========
+
+/**
+ * Claude Code 进程检测（平台兼容）
+ * Windows: tasklist / tasklist + wmic
+ * Linux/macOS: pgrep / ps
+ */
+function detectClaudeProcesses() {
+  return new Promise((resolve) => {
+    const platform = process.platform;
+
+    if (platform === 'win32') {
+      // Windows: 用 tasklist 找 node.exe + 命令行含 claude 的
+      exec('tasklist /FI "IMAGENAME eq node.exe" /FO CSV /NH', { timeout: 3000 }, (err, stdout) => {
+        if (err) { resolve({ running: false, sessions: 0, details: [] }); return; }
+        const lines = stdout.trim().split('\n').filter(l => l.trim());
+        // 简单的判断：有 node 进程就认为可能运行了 claude
+        // 更精确需要 wmic 查命令行，但 tasklist 性能好
+        const hasNode = lines.length > 0;
+        resolve({
+          running: hasNode,
+          sessions: hasNode ? 1 : 0,
+          details: hasNode ? [{ name: 'node.exe', pid: '?' }] : [],
+          _raw: lines.length,
+        });
+      });
+    } else {
+      // Linux/macOS: pgrep -f claude
+      const cmd = platform === 'darwin'
+        ? 'pgrep -fl claude 2>/dev/null || true'
+        : 'ps aux 2>/dev/null | grep -E "[c]laude|[n]ode.*claude" || true';
+      exec(cmd, { timeout: 3000, maxBuffer: 4096 }, (err, stdout) => {
+        if (err) { resolve({ running: false, sessions: 0, details: [] }); return; }
+        const lines = stdout.trim().split('\n').filter(l => l.trim());
+        resolve({
+          running: lines.length > 0,
+          sessions: lines.length,
+          details: lines.map(l => {
+            const parts = l.trim().split(/\s+/);
+            return { name: parts[parts.length - 1] || 'claude', pid: parts[1] || '?' };
+          }),
+        });
+      });
+    }
+  });
+}
+
+function startClaudeMonitor() {
+  stopClaudeMonitor(); // 避免重复
+  // 立即执行一次
+  checkClaudeStatus();
+  // 每 5 秒轮询
+  claudeMonitorTimer = setInterval(checkClaudeStatus, 5000);
+}
+
+function stopClaudeMonitor() {
+  if (claudeMonitorTimer) {
+    clearInterval(claudeMonitorTimer);
+    claudeMonitorTimer = null;
+  }
+}
+
+async function checkClaudeStatus() {
+  const status = await detectClaudeProcesses();
+  const changed = status.running !== lastClaudeStatus.running || status.sessions !== lastClaudeStatus.sessions;
+  lastClaudeStatus = { running: status.running, sessions: status.sessions, details: status.details || [] };
+
+  if (changed && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('claude-code:status', lastClaudeStatus);
+  }
+}
+
+// ======== SSH 远程连接 ========
+
+const sshConnections = new Map(); // profileId -> { process, status, host }
+
+function getSshProfile(profileId) {
+  if (!currentSettings || !Array.isArray(currentSettings.sshProfiles)) return null;
+  return currentSettings.sshProfiles.find(p => p.id === profileId) || null;
+}
+
+function connectSsh(profileId) {
+  const profile = getSshProfile(profileId);
+  if (!profile) return { success: false, error: 'Profile not found' };
+
+  // 如果已有连接，先断掉
+  disconnectSsh(profileId);
+
+  const args = ['-N'];
+  if (profile.port && profile.port !== 22) {
+    args.push('-p', String(profile.port));
+  }
+  if (profile.keyPath) {
+    args.push('-i', profile.keyPath);
+  }
+  args.push('-o', 'ServerAliveInterval=30');
+  args.push('-o', 'ServerAliveCountMax=3');
+  args.push(`${profile.user}@${profile.host}`);
+
+  try {
+    const { spawn } = require('child_process');
+    const child = spawn('ssh', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    sshConnections.set(profileId, {
+      process: child,
+      status: 'connecting',
+      host: profile.host,
+      connectedAt: null,
+      errorMsg: '',
+    });
+
+    let stderrBuf = '';
+    child.stderr.on('data', (data) => {
+      stderrBuf += data.toString();
+      // 检测连接成功
+      if (stderrBuf.includes('Entering interactive session') || stderrBuf.includes('authenticated')) {
+        const conn = sshConnections.get(profileId);
+        if (conn && conn.status === 'connecting') {
+          conn.status = 'connected';
+          conn.connectedAt = Date.now();
+          broadcastSshStatus(profileId);
+        }
+      }
+    });
+
+    child.on('error', (err) => {
+      const conn = sshConnections.get(profileId);
+      if (conn) {
+        conn.status = 'failed';
+        conn.errorMsg = err.message;
+        broadcastSshStatus(profileId);
+      }
+    });
+
+    child.on('exit', (code) => {
+      const conn = sshConnections.get(profileId);
+      if (!conn) return;
+      // 如果之前是 connecting 状态，说明连接失败
+      if (conn.status === 'connecting') {
+        conn.status = 'failed';
+        conn.errorMsg = `SSH exited with code ${code}`;
+      } else if (conn.status === 'connected') {
+        conn.status = 'disconnected';
+      }
+      // 清理
+      sshConnections.delete(profileId);
+      broadcastSshStatus(profileId);
+    });
+
+    // 3 秒后还没连接成功就标记失败
+    setTimeout(() => {
+      const conn = sshConnections.get(profileId);
+      if (conn && conn.status === 'connecting') {
+        conn.status = 'failed';
+        conn.errorMsg = 'Connection timeout';
+        broadcastSshStatus(profileId);
+      }
+    }, 3000);
+
+    broadcastSshStatus(profileId);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+function disconnectSsh(profileId) {
+  const conn = sshConnections.get(profileId);
+  if (conn && conn.process) {
+    try {
+      conn.process.kill();
+    } catch (_) {}
+  }
+  sshConnections.delete(profileId);
+  broadcastSshStatus(profileId);
+}
+
+function broadcastSshStatus(profileId) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const conn = sshConnections.get(profileId);
+  const status = conn ? {
+    profileId,
+    status: conn.status,
+    host: conn.host,
+    connectedAt: conn.connectedAt,
+    errorMsg: conn.errorMsg,
+  } : {
+    profileId,
+    status: 'disconnected',
+    host: '',
+    connectedAt: null,
+    errorMsg: '',
+  };
+  mainWindow.webContents.send('ssh:status-changed', status);
+}
+
+function getAllSshStatuses() {
+  const result = [];
+  if (currentSettings && Array.isArray(currentSettings.sshProfiles)) {
+    for (const profile of currentSettings.sshProfiles) {
+      const conn = sshConnections.get(profile.id);
+      result.push({
+        profileId: profile.id,
+        name: profile.name,
+        host: profile.host,
+        status: conn ? conn.status : 'disconnected',
+        connectedAt: conn ? conn.connectedAt : null,
+        errorMsg: conn ? conn.errorMsg : '',
+      });
+    }
+  }
+  return result;
 }
 
 // ======== 窗口管理 ========
@@ -373,6 +601,12 @@ function buildAndPopupContextMenu() {
   ]);
 
   menu.popup({ window: mainWindow });
+
+  // RE: 右键菜单弹出后恢复置顶
+  // 某些 Windows 版本/窗口管理器在菜单弹出后会丢掉 alwaysOnTop
+  if (currentSettings && currentSettings.alwaysOnTop) {
+    mainWindow.setAlwaysOnTop(true);
+  }
 }
 
 // ======== 点击穿透切换 ========
@@ -540,6 +774,63 @@ ipcMain.handle('settings:open-external', (event, url) => {
 // 获取应用版本号
 ipcMain.handle('app:get-version', () => {
   return app.getVersion();
+});
+
+// Claude Code 监控 IPC
+ipcMain.handle('claude-code:status', () => {
+  return lastClaudeStatus;
+});
+
+ipcMain.on('claude-code:refresh', () => {
+  checkClaudeStatus();
+});
+
+// SSH 远程 IPC
+ipcMain.handle('ssh:list-statuses', () => {
+  return getAllSshStatuses();
+});
+
+ipcMain.handle('ssh:connect', (event, profileId) => {
+  return connectSsh(profileId);
+});
+
+ipcMain.handle('ssh:disconnect', (event, profileId) => {
+  disconnectSsh(profileId);
+  return { success: true };
+});
+
+ipcMain.handle('ssh:save-profile', (event, profile) => {
+  if (!currentSettings || !profile || !profile.id || !profile.host) {
+    return { success: false, error: 'Invalid profile' };
+  }
+  const profiles = Array.isArray(currentSettings.sshProfiles) ? [...currentSettings.sshProfiles] : [];
+  const idx = profiles.findIndex(p => p.id === profile.id);
+  const entry = {
+    id: profile.id,
+    name: profile.name || profile.host,
+    host: profile.host,
+    port: typeof profile.port === 'number' ? profile.port : 22,
+    user: profile.user || 'root',
+    keyPath: profile.keyPath || '',
+    autoReconnect: !!profile.autoReconnect,
+  };
+  if (idx >= 0) {
+    profiles[idx] = entry;
+  } else {
+    profiles.push(entry);
+  }
+  currentSettings.sshProfiles = profiles;
+  saveSettings(currentSettings);
+  return { success: true };
+});
+
+ipcMain.handle('ssh:delete-profile', (event, profileId) => {
+  if (!currentSettings) return { success: false, error: 'No settings' };
+  const profiles = Array.isArray(currentSettings.sshProfiles) ? [...currentSettings.sshProfiles] : [];
+  currentSettings.sshProfiles = profiles.filter(p => p.id !== profileId);
+  disconnectSsh(profileId);
+  saveSettings(currentSettings);
+  return { success: true };
 });
 
 // ======== 应用生命周期 ========

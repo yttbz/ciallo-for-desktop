@@ -49,6 +49,8 @@ function renderContent(tabId) {
     case 'window': renderWindow(content); break;
     case 'size': renderSize(content); break;
     case 'hud': renderHud(content); break;
+    case 'claude': renderClaude(content); break;
+    case 'ssh': renderSsh(content); break;
     case 'tray': renderTray(content); break;
     case 'about': renderAbout(content); break;
   }
@@ -281,6 +283,291 @@ function setupHudPositionDropdown() {
       if (!res.success) showToast('保存失败', true);
     });
   });
+}
+
+// ---- 🤖 Claude Code ----
+
+function renderClaude(container) {
+  container.innerHTML = `
+    <div class="tab-page">
+      <div class="tab-title">🤖 Claude Code 监控</div>
+      <div class="tab-subtitle">监控本地和远程 Claude Code 会话状态</div>
+
+      <div class="section">
+        <div class="row">
+          <div class="row-info">
+            <div class="row-label">启用 Claude Code 监控</div>
+            <div class="row-desc">检测 Claude Code 进程并在 HUD 中显示状态</div>
+          </div>
+          <button class="switch ${currentSettings.enableClaudeMonitor ? 'on' : ''}" data-key="enableClaudeMonitor"></button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">HUD 显示</div>
+        <div class="row">
+          <div class="row-info">
+            <div class="row-label">显示 Claude 状态</div>
+            <div class="row-desc">在 HUD 面板中显示 Claude Code 运行状态</div>
+          </div>
+          <button class="switch ${currentSettings.hudShowClaudeStatus !== false ? 'on' : ''}" data-key="hudShowClaudeStatus"></button>
+        </div>
+      </div>
+
+      <div class="section" id="claudeStatusSection" style="display:none;">
+        <div class="section-title">当前状态</div>
+        <div class="row" id="claudeStatusRow">
+          <div class="row-info">
+            <div class="row-label" id="claudeStatusLabel">等待检测...</div>
+            <div class="row-desc">Claude Code 会话状态</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  setupSwitches(container);
+
+  // 拉取当前 Claude 状态
+  if (window.settingsAPI.getClaudeStatus) {
+    window.settingsAPI.getClaudeStatus().then(status => {
+      const section = document.getElementById('claudeStatusSection');
+      const label = document.getElementById('claudeStatusLabel');
+      if (section && label) {
+        section.style.display = 'block';
+        if (status && status.running) {
+          label.innerHTML = '🟢 运行中 (' + status.sessions + ' 会话)';
+        } else {
+          label.innerHTML = '⚪ 未检测到 Claude Code 会话';
+        }
+      }
+    }).catch(() => {});
+  }
+}
+
+// ---- 🔌 SSH 远程连接 ----
+
+let sshStatusTimer = null;
+
+function renderSsh(container) {
+  container.innerHTML = `
+    <div class="tab-page">
+      <div class="tab-title">🔌 SSH 远程连接</div>
+      <div class="tab-subtitle">管理远程服务器的 SSH 连接，监控远程 Claude Code</div>
+
+      <div class="section">
+        <div class="row">
+          <div class="row-info">
+            <div class="row-label">启用 SSH 远程</div>
+            <div class="row-desc">允许通过 SSH 连接远程服务器</div>
+          </div>
+          <button class="switch ${currentSettings.enableSshRemote ? 'on' : ''}" data-key="enableSshRemote"></button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">SSH 配置</div>
+        <div id="sshProfileList"></div>
+        <div style="margin-top:10px;">
+          <button class="btn btn-primary" id="addSshBtn">+ 添加配置</button>
+        </div>
+      </div>
+
+      <div class="section" id="sshFormSection" style="display:none;">
+        <div class="section-title" id="sshFormTitle">添加 SSH 配置</div>
+        <div style="background:var(--bg-white);padding:14px;border-radius:var(--radius);box-shadow:var(--shadow-sm);">
+          <div style="margin-bottom:8px;">
+            <label style="font-size:12px;color:var(--text-secondary);display:block;margin-bottom:2px;">名称</label>
+            <input type="text" id="sshFormName" style="width:100%;padding:6px 8px;border:2px solid var(--pink-lighter);border-radius:var(--radius-sm);font-size:13px;outline:none;">
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:8px;">
+            <div style="flex:3;">
+              <label style="font-size:12px;color:var(--text-secondary);display:block;margin-bottom:2px;">主机</label>
+              <input type="text" id="sshFormHost" placeholder="192.168.1.100" style="width:100%;padding:6px 8px;border:2px solid var(--pink-lighter);border-radius:var(--radius-sm);font-size:13px;outline:none;">
+            </div>
+            <div style="flex:1;">
+              <label style="font-size:12px;color:var(--text-secondary);display:block;margin-bottom:2px;">端口</label>
+              <input type="number" id="sshFormPort" value="22" style="width:100%;padding:6px 8px;border:2px solid var(--pink-lighter);border-radius:var(--radius-sm);font-size:13px;outline:none;">
+            </div>
+          </div>
+          <div style="margin-bottom:8px;">
+            <label style="font-size:12px;color:var(--text-secondary);display:block;margin-bottom:2px;">用户名</label>
+            <input type="text" id="sshFormUser" value="root" style="width:100%;padding:6px 8px;border:2px solid var(--pink-lighter);border-radius:var(--radius-sm);font-size:13px;outline:none;">
+          </div>
+          <div style="margin-bottom:8px;">
+            <label style="font-size:12px;color:var(--text-secondary);display:block;margin-bottom:2px;">SSH 密钥路径（可选）</label>
+            <input type="text" id="sshFormKey" placeholder="~/.ssh/id_rsa" style="width:100%;padding:6px 8px;border:2px solid var(--pink-lighter);border-radius:var(--radius-sm);font-size:13px;outline:none;">
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;">
+            <button class="btn" id="sshFormCancel">取消</button>
+            <button class="btn btn-primary" id="sshFormSave">保存</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  setupSwitches(container);
+  setupSshForm();
+  refreshSshProfileList();
+  startSshStatusPolling();
+}
+
+function setupSshForm() {
+  let editingId = null;
+
+  document.getElementById('addSshBtn').addEventListener('click', () => {
+    editingId = null;
+    document.getElementById('sshFormTitle').textContent = '添加 SSH 配置';
+    document.getElementById('sshFormName').value = '';
+    document.getElementById('sshFormHost').value = '';
+    document.getElementById('sshFormPort').value = '22';
+    document.getElementById('sshFormUser').value = 'root';
+    document.getElementById('sshFormKey').value = '';
+    document.getElementById('sshFormSection').style.display = 'block';
+  });
+
+  document.getElementById('sshFormCancel').addEventListener('click', () => {
+    document.getElementById('sshFormSection').style.display = 'none';
+  });
+
+  document.getElementById('sshFormSave').addEventListener('click', async () => {
+    const name = document.getElementById('sshFormName').value.trim();
+    const host = document.getElementById('sshFormHost').value.trim();
+    const port = parseInt(document.getElementById('sshFormPort').value) || 22;
+    const user = document.getElementById('sshFormUser').value.trim() || 'root';
+    const keyPath = document.getElementById('sshFormKey').value.trim();
+
+    if (!host) {
+      showToast('请输入主机地址', true);
+      return;
+    }
+
+    const profile = {
+      id: editingId || 'ssh_' + Date.now(),
+      name: name || host,
+      host,
+      port,
+      user,
+      keyPath,
+    };
+
+    if (window.settingsAPI.sshSaveProfile) {
+      const result = await window.settingsAPI.sshSaveProfile(profile);
+      if (result.success) {
+        showToast('保存成功');
+        document.getElementById('sshFormSection').style.display = 'none';
+        refreshSshProfileList();
+      } else {
+        showToast('保存失败: ' + (result.error || ''), true);
+      }
+    }
+  });
+}
+
+async function refreshSshProfileList() {
+  const list = document.getElementById('sshProfileList');
+  if (!list) return;
+
+  let profiles = [];
+  let statuses = [];
+  if (window.settingsAPI.sshListStatuses) {
+    try {
+      statuses = await window.settingsAPI.sshListStatuses();
+    } catch (_) {}
+  }
+
+  // 从当前设置中获取 profiles
+  if (currentSettings && Array.isArray(currentSettings.sshProfiles)) {
+    profiles = currentSettings.sshProfiles;
+  }
+
+  if (profiles.length === 0) {
+    list.innerHTML = '<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:13px;">还没有 SSH 配置，点击上方按钮添加</div>';
+    return;
+  }
+
+  list.innerHTML = profiles.map(p => {
+    const st = statuses.find(s => s.profileId === p.id);
+    const statusText = st ? getStatusText(st.status) : '⚪ 未连接';
+    const statusClass = st ? st.status : 'disconnected';
+    return `
+      <div class="row" style="flex-wrap:wrap;">
+        <div class="row-info">
+          <div class="row-label">${p.name}</div>
+          <div class="row-desc">${p.user}@${p.host}:${p.port}</div>
+        </div>
+        <div style="font-size:12px;padding:2px 8px;border-radius:4px;background:var(--pink-lighter);margin-right:8px;">${statusText}</div>
+        <div style="display:flex;gap:4px;">
+          <button class="btn ssh-connect-btn" data-profile-id="${p.id}" style="font-size:12px;padding:4px 10px;">
+            ${st && st.status === 'connected' ? '断开' : '连接'}
+          </button>
+          <button class="btn ssh-delete-btn" data-profile-id="${p.id}" style="font-size:12px;padding:4px 10px;color:#ff6b6b;">删除</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // 连接/断开按钮
+  list.querySelectorAll('.ssh-connect-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const pid = btn.dataset.profileId;
+      const st = statuses.find(s => s.profileId === pid);
+      if (st && st.status === 'connected') {
+        if (window.settingsAPI.sshDisconnect) {
+          await window.settingsAPI.sshDisconnect(pid);
+          showToast('已断开连接');
+        }
+      } else {
+        if (window.settingsAPI.sshConnect) {
+          const result = await window.settingsAPI.sshConnect(pid);
+          if (result.success) {
+            showToast('正在连接...');
+          } else {
+            showToast('连接失败: ' + (result.error || ''), true);
+          }
+        }
+      }
+    });
+  });
+
+  // 删除按钮
+  list.querySelectorAll('.ssh-delete-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const pid = btn.dataset.profileId;
+      if (window.settingsAPI.sshDeleteProfile) {
+        const result = await window.settingsAPI.sshDeleteProfile(pid);
+        if (result.success) {
+          showToast('已删除');
+          refreshSshProfileList();
+        }
+      }
+    });
+  });
+}
+
+function getStatusText(status) {
+  switch (status) {
+    case 'connected': return '🟢 已连接';
+    case 'connecting': return '🟡 连接中';
+    case 'failed': return '🔴 失败';
+    case 'disconnected': return '⚪ 未连接';
+    default: return '⚪ 未知';
+  }
+}
+
+function startSshStatusPolling() {
+  stopSshStatusPolling();
+  if (window.settingsAPI.sshListStatuses) {
+    sshStatusTimer = setInterval(refreshSshProfileList, 3000);
+  }
+}
+
+function stopSshStatusPolling() {
+  if (sshStatusTimer) {
+    clearInterval(sshStatusTimer);
+    sshStatusTimer = null;
+  }
 }
 
 // ---- 🧩 系统托盘 ----
