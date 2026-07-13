@@ -448,6 +448,7 @@ function showCredit() {
   console.log('模型: 浴衣丛雨 (Murasame Yukata)');
   console.log('版权: © ゆずソフト (Yuzu-Soft)');
   console.log('仅供个人使用，请勿用于直播或商业用途');
+  console.log('官方网站: https://m1f.cn');
 }
 
 // ======== 启动 ========

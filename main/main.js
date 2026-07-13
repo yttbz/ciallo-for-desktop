@@ -17,7 +17,7 @@ const {
 } = require('electron');
 const path = require('path');
 const settings = require('./settings');
-const { createSettingsWindow, closeSettingsWindow } = require('./settings-window');
+const { createSettingsWindow, closeSettingsWindow, getSettingsWindow } = require('./settings-window');
 
 // ======== 全局状态 ========
 let mainWindow = null;
@@ -94,6 +94,14 @@ function applySettingsToWindow(s) {
       path: process.execPath,
     });
   }
+
+  // 设置窗口置顶
+  if (s.settingsWindowAlwaysOnTop !== undefined) {
+    const sw = getSettingsWindow();
+    if (sw) {
+      sw.setAlwaysOnTop(s.settingsWindowAlwaysOnTop);
+    }
+  }
 }
 
 // ======== 窗口管理 ========
@@ -167,9 +175,16 @@ function createTray() {
     trayIcon = trayIcon.resize({ width: 32, height: 32 });
   }
 
-  tray = new Tray(trayIcon);
-  tray.setToolTip('Ciallo～(∠?ω< )⌒★!');
-  updateTrayMenu();
+  try {
+    tray = new Tray(trayIcon);
+    tray.setToolTip('Ciallo～(∠?ω< )⌒★!');
+  } catch (e) {
+    console.error('[Main] Failed to create tray:', e.message);
+  }
+
+  if (tray) {
+    updateTrayMenu();
+  }
 }
 
 function updateTrayMenu() {
@@ -193,7 +208,7 @@ function updateTrayMenu() {
     {
       label: '打开设置',
       click: () => {
-        createSettingsWindow(mainWindow);
+        createSettingsWindow(mainWindow, currentSettings || {});
       },
     },
     { type: 'separator' },
@@ -249,7 +264,7 @@ function showAboutDialog() {
     title: '关于 CialloForDesktop',
     message: 'Ciallo～(∠?ω< )⌒★!',
     detail: [
-      'CialloForDesktop v1.0.1',
+      'CialloForDesktop v' + app.getVersion(),
       '',
       '一款基于 Live2D 的 Windows 桌面宠物',
       '模型: 浴衣丛雨 (Murasame Yukata)',
@@ -257,6 +272,7 @@ function showAboutDialog() {
       '',
       'Built with Electron + PixiJS + Live2D Cubism',
       '',
+      '官方网站: https://m1f.cn',
       '项目地址: https://github.com/yttbz/ciallo-for-desktop',
     ].join('\n'),
   });
@@ -320,7 +336,7 @@ ipcMain.on('window-ready', () => {
 
 // 打开设置窗口
 ipcMain.on('open-settings', () => {
-  createSettingsWindow(mainWindow);
+  createSettingsWindow(mainWindow, currentSettings || {});
 });
 
 // ======== 设置 IPC ========
@@ -373,6 +389,11 @@ ipcMain.handle('settings:open-external', (event, url) => {
   shell.openExternal(url);
 });
 
+// 获取应用版本号
+ipcMain.handle('app:get-version', () => {
+  return app.getVersion();
+});
+
 // ======== 应用生命周期 ========
 
 app.whenReady().then(() => {
@@ -384,6 +405,8 @@ app.whenReady().then(() => {
       createWindow();
     }
   });
+}).catch((err) => {
+  console.error('[Main] Fatal error during startup:', err);
 });
 
 app.on('window-all-closed', () => {

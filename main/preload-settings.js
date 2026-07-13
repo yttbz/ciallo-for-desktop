@@ -26,4 +26,7 @@ contextBridge.exposeInMainWorld('settingsAPI', {
 
   // 打开外部链接
   openExternal: (url) => ipcRenderer.invoke('settings:open-external', url),
+
+  // 获取应用版本号
+  getAppVersion: () => ipcRenderer.invoke('app:get-version'),
 });

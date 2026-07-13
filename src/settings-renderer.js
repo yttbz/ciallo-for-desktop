@@ -7,6 +7,7 @@
 // ======== 全局状态 ========
 
 let currentSettings = null;
+let appVersion = '1.0.0'; // fallback
 
 // ======== DOM 引用 ========
 
@@ -261,7 +262,7 @@ function renderAbout(container) {
     <div class="tab-page">
       <div class="about-header">
         <div class="about-title">Ciallo～(∠?ω< )⌒★!</div>
-        <div class="about-version">v1.0.0</div>
+        <div class="about-version">v${appVersion}</div>
         <div class="about-model">一款基于 Live2D 的桌面宠物</div>
       </div>
 
@@ -271,6 +272,10 @@ function renderAbout(container) {
           模型: <strong>浴衣丛雨 (Murasame Yukata)</strong><br>
           版权: <strong>© ゆずソフト (Yuzu-Soft)</strong><br>
           仅供个人使用，请勿用于直播或商业用途<br>
+          <br>
+          <span class="about-link" id="officialSiteLink" style="font-size:13px;">
+            🌐 官方网站 · m1f.cn →
+          </span>
           <br>
           <span class="about-link" id="githubLink" style="font-size:13px;">
             📂 源代码 · GitHub →
@@ -283,6 +288,17 @@ function renderAbout(container) {
         <div class="about-credit">
           Electron · PixiJS · Live2D Cubism 4<br>
           pixi-live2d-display · electron-builder
+        </div>
+      </div>
+
+      <div class="about-section">
+        <div class="about-section-title">⚙️ 设置</div>
+        <div class="row">
+          <div class="row-info">
+            <div class="row-label">设置窗口置顶</div>
+            <div class="row-desc">让设置面板窗口保持在所有窗口最前面</div>
+          </div>
+          <button class="switch ${currentSettings.settingsWindowAlwaysOnTop ? 'on' : ''}" data-key="settingsWindowAlwaysOnTop"></button>
         </div>
       </div>
 
@@ -301,6 +317,11 @@ function renderAbout(container) {
     </div>
   `;
 
+  // m1f.cn 官网链接
+  document.getElementById('officialSiteLink').addEventListener('click', () => {
+    window.settingsAPI.openExternal('https://m1f.cn');
+  });
+
   // GitHub 链接
   document.getElementById('githubLink').addEventListener('click', () => {
     window.settingsAPI.openExternal('https://github.com/yttbz/ciallo-for-desktop');
@@ -315,6 +336,9 @@ function renderAbout(container) {
       showToast('重置失败', true);
     }
   });
+
+  // 设置窗口置顶开关
+  setupSwitches(container);
 }
 
 // ======== 通用开关组件 ========
@@ -361,6 +385,15 @@ function onSettingsChanged(settings) {
 async function init() {
   // 获取初始设置
   currentSettings = await window.settingsAPI.getSettings();
+
+  // 获取应用版本号
+  try {
+    if (window.settingsAPI.getAppVersion) {
+      appVersion = await window.settingsAPI.getAppVersion();
+    }
+  } catch (e) {
+    console.warn('[Settings] Failed to get app version:', e.message);
+  }
 
   // 监听变更
   window.settingsAPI.onChanged(onSettingsChanged);

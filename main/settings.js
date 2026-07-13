@@ -36,6 +36,7 @@ function getDefaults() {
     // 系统
     autoStart: false,
     minimizeToTray: true,
+    settingsWindowAlwaysOnTop: false,
   };
 }
 
@@ -95,6 +96,9 @@ function validate(raw) {
   }
   if (typeof raw.minimizeToTray === 'boolean') {
     result.minimizeToTray = raw.minimizeToTray;
+  }
+  if (typeof raw.settingsWindowAlwaysOnTop === 'boolean') {
+    result.settingsWindowAlwaysOnTop = raw.settingsWindowAlwaysOnTop;
   }
 
   result.version = SETTINGS_VERSION;

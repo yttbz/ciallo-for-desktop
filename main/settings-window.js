@@ -9,7 +9,7 @@ const path = require('path');
 
 let settingsWindow = null;
 
-function createSettingsWindow(parentWindow) {
+function createSettingsWindow(parentWindow, windowSettings = {}) {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     settingsWindow.focus();
     return;
@@ -36,6 +36,11 @@ function createSettingsWindow(parentWindow) {
 
   settingsWindow.loadFile(path.join(__dirname, '..', 'src', 'settings.html'));
 
+  // 应用设置窗口置顶
+  if (windowSettings.settingsWindowAlwaysOnTop) {
+    settingsWindow.setAlwaysOnTop(true);
+  }
+
   settingsWindow.on('closed', () => {
     settingsWindow = null;
   });
@@ -54,4 +59,8 @@ function closeSettingsWindow() {
   }
 }
 
-module.exports = { createSettingsWindow, closeSettingsWindow };
+function getSettingsWindow() {
+  return settingsWindow && !settingsWindow.isDestroyed() ? settingsWindow : null;
+}
+
+module.exports = { createSettingsWindow, closeSettingsWindow, getSettingsWindow };
